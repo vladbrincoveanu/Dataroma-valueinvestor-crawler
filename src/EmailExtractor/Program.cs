@@ -1,5 +1,4 @@
 using EmailExtractor.Commands;
-using EmailExtractor.Lib;
 
 namespace EmailExtractor;
 
@@ -7,8 +6,6 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        Env.LoadDotEnv();
-
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
             Console.WriteLine(Usage.Text);

@@ -12,7 +12,7 @@ public static class AgentLoop
         var missing = config.ValidateRequired();
         if (missing.Count > 0)
         {
-            Console.Error.WriteLine("Missing required environment variables:");
+            Console.Error.WriteLine("Missing required configuration values (app settings/user secrets/env):");
             foreach (var name in missing)
                 Console.Error.WriteLine($"  {name}");
             return 1;

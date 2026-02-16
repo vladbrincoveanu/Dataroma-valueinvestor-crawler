@@ -1,4 +1,6 @@
 using System.Globalization;
+using Microsoft.Extensions.Configuration;
+using EmailExtractor;
 
 namespace EmailExtractor.Lib.Agent;
 
@@ -25,28 +27,30 @@ public sealed record AgentConfig(
 {
     public static AgentConfig FromEnv()
     {
-        var outDir = Env.Get("OUT_DIR", "out").Trim();
+        var cfg = BuildConfiguration();
+
+        var outDir = ReadString(cfg, "Agent:OutDir", Env.Get("OUT_DIR", "out")).Trim();
         if (outDir.Length == 0) outDir = "out";
 
-        var importantTickers = Env.Get("IMPORTANT_TICKERS_OUT", Path.Combine(outDir, "important_tickers.json")).Trim();
-        var financialOverview = Env.Get("FINANCIAL_OVERVIEW_OUT", Path.Combine(outDir, "financial_overview.jsonl")).Trim();
-        var dataromaCtx = Env.Get("DATAROMA_OUT_CTX", "dataroma_context.txt").Trim();
-        var vicCtx = Env.Get("VIC_OUT_CTX", Path.Combine(outDir, "vic_context.txt")).Trim();
-        var foxlandCtx = Env.Get("OUT_CTX", "foxland_context.txt").Trim();
-        var agentState = Env.Get("AGENT_STATE_PATH", Path.Combine(outDir, "agent_state.json")).Trim();
+        var importantTickers = ReadString(cfg, "Agent:ImportantTickersPath", Env.Get("IMPORTANT_TICKERS_OUT", Path.Combine(outDir, "important_tickers.json"))).Trim();
+        var financialOverview = ReadString(cfg, "Agent:FinancialOverviewPath", Env.Get("FINANCIAL_OVERVIEW_OUT", Path.Combine(outDir, "financial_overview.jsonl"))).Trim();
+        var dataromaCtx = ReadString(cfg, "Agent:DataromaContextPath", Env.Get("DATAROMA_OUT_CTX", "dataroma_context.txt")).Trim();
+        var vicCtx = ReadString(cfg, "Agent:VicContextPath", Env.Get("VIC_OUT_CTX", Path.Combine(outDir, "vic_context.txt"))).Trim();
+        var foxlandCtx = ReadString(cfg, "Agent:FoxlandContextPath", Env.Get("OUT_CTX", "foxland_context.txt")).Trim();
+        var agentState = ReadString(cfg, "Agent:AgentStatePath", Env.Get("AGENT_STATE_PATH", Path.Combine(outDir, "agent_state.json"))).Trim();
 
         return new AgentConfig(
-            TelegramBotToken: Env.Get("TELEGRAM_BOT_TOKEN", ""),
-            TelegramChatId: Env.Get("TELEGRAM_CHAT_ID", ""),
-            OpenAiApiKey: Env.Get("OPENAI_API_KEY", ""),
-            OpenAiBaseUrl: Env.Get("OPENAI_BASE_URL", "https://api.openai.com/v1").TrimEnd('/'),
-            OpenAiModel: Env.Get("OPENAI_MODEL", "gpt-4o"),
-            OpenAiMaxTokens: ClampInt(Env.GetInt("OPENAI_MAX_TOKENS", 500), 64, 16384),
-            OpenAiTemperature: ClampDouble(Env.GetDouble("OPENAI_TEMPERATURE", 0.2), 0.0, 2.0),
-            AgentHeartbeatMinutes: ClampInt(Env.GetInt("AGENT_HEARTBEAT_MINUTES", 30), 1, 24 * 60),
-            AgentMinMinutesBetweenCycleAnalysis: ClampInt(Env.GetInt("AGENT_MIN_MINUTES_BETWEEN_CYCLE_ANALYSIS", 720), 0, 7 * 24 * 60),
-            AgentMaxContextChars: ClampInt(Env.GetInt("AGENT_MAX_CONTEXT_CHARS", 40000), 1000, 1_000_000),
-            AgentMaxConversationTurns: ClampInt(Env.GetInt("AGENT_MAX_CONVERSATION_TURNS", 12), 1, 200),
+            TelegramBotToken: ReadString(cfg, "Agent:TelegramBotToken", Env.Get("TELEGRAM_BOT_TOKEN", "")),
+            TelegramChatId: ReadString(cfg, "Agent:TelegramChatId", Env.Get("TELEGRAM_CHAT_ID", "")),
+            OpenAiApiKey: ReadString(cfg, "Agent:OpenAiApiKey", Env.Get("OPENAI_API_KEY", "")),
+            OpenAiBaseUrl: ReadString(cfg, "Agent:OpenAiBaseUrl", Env.Get("OPENAI_BASE_URL", "https://api.openai.com/v1")).TrimEnd('/'),
+            OpenAiModel: ReadString(cfg, "Agent:OpenAiModel", Env.Get("OPENAI_MODEL", "gpt-4o")),
+            OpenAiMaxTokens: ClampInt(ReadInt(cfg, "Agent:OpenAiMaxTokens", Env.GetInt("OPENAI_MAX_TOKENS", 500)), 64, 16384),
+            OpenAiTemperature: ClampDouble(ReadDouble(cfg, "Agent:OpenAiTemperature", Env.GetDouble("OPENAI_TEMPERATURE", 0.2)), 0.0, 2.0),
+            AgentHeartbeatMinutes: ClampInt(ReadInt(cfg, "Agent:HeartbeatMinutes", Env.GetInt("AGENT_HEARTBEAT_MINUTES", 30)), 1, 24 * 60),
+            AgentMinMinutesBetweenCycleAnalysis: ClampInt(ReadInt(cfg, "Agent:MinMinutesBetweenCycleAnalysis", Env.GetInt("AGENT_MIN_MINUTES_BETWEEN_CYCLE_ANALYSIS", 720)), 0, 7 * 24 * 60),
+            AgentMaxContextChars: ClampInt(ReadInt(cfg, "Agent:MaxContextChars", Env.GetInt("AGENT_MAX_CONTEXT_CHARS", 40000)), 1000, 1_000_000),
+            AgentMaxConversationTurns: ClampInt(ReadInt(cfg, "Agent:MaxConversationTurns", Env.GetInt("AGENT_MAX_CONVERSATION_TURNS", 12)), 1, 200),
             OutDir: outDir,
             ImportantTickersPath: importantTickers,
             FinancialOverviewPath: financialOverview,
@@ -105,5 +109,44 @@ public sealed record AgentConfig(
         if (value < min) return min;
         if (value > max) return max;
         return value;
+    }
+
+    private static IConfigurationRoot BuildConfiguration()
+    {
+        var builder = new ConfigurationBuilder();
+        TryAddJson(builder, "appsettings.json");
+        TryAddJson(builder, Path.Combine("src", "EmailExtractor", "appsettings.json"));
+        TryAddJson(builder, Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
+        builder.AddUserSecrets(typeof(Program).Assembly, optional: true);
+        builder.AddEnvironmentVariables();
+        return builder.Build();
+    }
+
+    private static void TryAddJson(IConfigurationBuilder builder, string path)
+    {
+        if (File.Exists(path))
+            builder.AddJsonFile(path, optional: true, reloadOnChange: false);
+    }
+
+    private static string ReadString(IConfiguration cfg, string key, string fallback)
+    {
+        var value = cfg[key];
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    }
+
+    private static int ReadInt(IConfiguration cfg, string key, int fallback)
+    {
+        var value = cfg[key];
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static double ReadDouble(IConfiguration cfg, string key, double fallback)
+    {
+        var value = cfg[key];
+        return double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
     }
 }

@@ -227,25 +227,36 @@ public sealed class AgentOrchestrator
 
         var newDataromaDocs = LoadUnseenDocs(_config.DataromaContextPath, state.SeenDataromaIds, maxDocs: 10);
         var newVicDocs = LoadUnseenDocs(_config.VicContextPath, state.SeenVicIds, maxDocs: 10);
-        var analysisRequest = BuildAnalysisRequest(newDataromaDocs, newVicDocs);
+        var hasNewDocs = newDataromaDocs.Count > 0 || newVicDocs.Count > 0;
+        var isCycleAnalysisDue = IsCycleAnalysisDue(state, _config.AgentMinMinutesBetweenCycleAnalysis);
 
-        string analysis;
+        var analysis = state.LastAnalysis;
         var analysisSucceeded = false;
-        try
+        if (hasNewDocs || isCycleAnalysisDue)
         {
-            var completion = await _openAi.ChatAsync(
-                [new ChatMessage("system", systemPrompt), new ChatMessage("user", analysisRequest)], ct);
-            analysis = completion.Content;
-            analysisSucceeded = true;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[agent] OpenAI error: {ex.Message}");
-            analysis = $"Analysis unavailable: {ex.Message}";
-        }
+            var analysisRequest = BuildAnalysisRequest(newDataromaDocs, newVicDocs);
+            state.MarkOpenAiCycleAttempt();
+            try
+            {
+                var completion = await _openAi.ChatAsync(
+                    [new ChatMessage("system", systemPrompt), new ChatMessage("user", analysisRequest)], ct);
+                analysis = completion.Content;
+                analysisSucceeded = true;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[agent] OpenAI error: {ex.Message}");
+                analysis = $"Analysis unavailable: {ex.Message}";
+            }
 
-        await TrySendAsync(_config.TelegramChatId, analysis, ct);
+            await TrySendAsync(_config.TelegramChatId, analysis, ct);
+        }
+        else
+        {
+            Console.Error.WriteLine(
+                $"[agent] Skipping OpenAI analysis (no new docs; cooldown {_config.AgentMinMinutesBetweenCycleAnalysis}m).");
+        }
 
         try
         {
@@ -384,5 +395,17 @@ public sealed class AgentOrchestrator
                 sb.AppendLine(doc.Body.Trim());
             sb.AppendLine();
         }
+    }
+
+    private static bool IsCycleAnalysisDue(AgentState state, int minMinutesBetweenAnalysis)
+    {
+        if (minMinutesBetweenAnalysis <= 0)
+            return true;
+
+        if (state.LastOpenAiCycleUtc == DateTime.MinValue)
+            return true;
+
+        var elapsed = DateTime.UtcNow - state.LastOpenAiCycleUtc;
+        return elapsed >= TimeSpan.FromMinutes(minMinutesBetweenAnalysis);
     }
 }

@@ -11,6 +11,7 @@ public sealed record AgentConfig(
     int OpenAiMaxTokens,
     double OpenAiTemperature,
     int AgentHeartbeatMinutes,
+    int AgentMinMinutesBetweenCycleAnalysis,
     int AgentMaxContextChars,
     int AgentMaxConversationTurns,
     string OutDir,
@@ -43,6 +44,7 @@ public sealed record AgentConfig(
             OpenAiMaxTokens: ClampInt(appSettings.OpenAiMaxTokens, 64, 16384),
             OpenAiTemperature: ClampDouble(appSettings.OpenAiTemperature, 0.0, 2.0),
             AgentHeartbeatMinutes: ClampInt(appSettings.AgentHeartbeatMinutes, 1, 24 * 60),
+            AgentMinMinutesBetweenCycleAnalysis: ClampInt(appSettings.AgentMinMinutesBetweenCycleAnalysis, 0, 7 * 24 * 60),
             AgentMaxContextChars: ClampInt(appSettings.AgentMaxContextChars, 1000, 1_000_000),
             AgentMaxConversationTurns: ClampInt(appSettings.AgentMaxConversationTurns, 1, 200),
             OutDir: outDir,
@@ -75,6 +77,7 @@ public sealed record AgentConfig(
                 $"OpenAI max tokens: {OpenAiMaxTokens.ToString(CultureInfo.InvariantCulture)}",
                 $"OpenAI temperature: {OpenAiTemperature.ToString("0.##", CultureInfo.InvariantCulture)}",
                 $"Heartbeat minutes: {AgentHeartbeatMinutes.ToString(CultureInfo.InvariantCulture)}",
+                $"Min minutes between cycle analysis: {AgentMinMinutesBetweenCycleAnalysis.ToString(CultureInfo.InvariantCulture)}",
                 $"Max context chars: {AgentMaxContextChars.ToString(CultureInfo.InvariantCulture)}",
                 $"Max conversation turns: {AgentMaxConversationTurns.ToString(CultureInfo.InvariantCulture)}",
                 $"Out dir: {OutDir}",
@@ -108,6 +111,7 @@ internal sealed record AgentAppSettings(
     int OpenAiMaxTokens,
     double OpenAiTemperature,
     int AgentHeartbeatMinutes,
+    int AgentMinMinutesBetweenCycleAnalysis,
     int AgentMaxContextChars,
     int AgentMaxConversationTurns)
 {
@@ -133,6 +137,7 @@ internal sealed record AgentAppSettings(
                 OpenAiMaxTokens: ReadInt(agent, "OpenAiMaxTokens", 1500),
                 OpenAiTemperature: ReadDouble(agent, "OpenAiTemperature", 0.2),
                 AgentHeartbeatMinutes: ReadInt(agent, "HeartbeatMinutes", 30),
+                AgentMinMinutesBetweenCycleAnalysis: ReadInt(agent, "MinMinutesBetweenCycleAnalysis", 180),
                 AgentMaxContextChars: ReadInt(agent, "MaxContextChars", 40000),
                 AgentMaxConversationTurns: ReadInt(agent, "MaxConversationTurns", 12)
             );
@@ -150,6 +155,7 @@ internal sealed record AgentAppSettings(
             OpenAiMaxTokens: 1500,
             OpenAiTemperature: 0.2,
             AgentHeartbeatMinutes: 30,
+            AgentMinMinutesBetweenCycleAnalysis: 180,
             AgentMaxContextChars: 40000,
             AgentMaxConversationTurns: 12
         );

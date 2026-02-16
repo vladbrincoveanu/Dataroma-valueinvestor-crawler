@@ -7,6 +7,7 @@ namespace EmailExtractor.Lib.Agent;
 public sealed class AgentState
 {
     public DateTime LastCycleUtc { get; private set; } = DateTime.MinValue;
+    public DateTime LastOpenAiCycleUtc { get; private set; } = DateTime.MinValue;
     public int CycleCount { get; private set; }
     public string LastAnalysis { get; private set; } = string.Empty;
     public List<ChatMessage> ConversationHistory { get; private set; } = [];
@@ -15,6 +16,7 @@ public sealed class AgentState
 
     private sealed record StateDto(
         [property: JsonPropertyName("last_cycle_utc")] DateTime LastCycleUtc,
+        [property: JsonPropertyName("last_openai_cycle_utc")] DateTime LastOpenAiCycleUtc,
         [property: JsonPropertyName("cycle_count")] int CycleCount,
         [property: JsonPropertyName("last_analysis")] string LastAnalysis,
         [property: JsonPropertyName("conversation_history")] List<ChatMessageDto> ConversationHistory,
@@ -42,6 +44,7 @@ public sealed class AgentState
             return new AgentState
             {
                 LastCycleUtc = dto.LastCycleUtc,
+                LastOpenAiCycleUtc = dto.LastOpenAiCycleUtc,
                 CycleCount = dto.CycleCount,
                 LastAnalysis = dto.LastAnalysis,
                 ConversationHistory = dto.ConversationHistory
@@ -61,6 +64,7 @@ public sealed class AgentState
     {
         var dto = new StateDto(
             LastCycleUtc: LastCycleUtc,
+            LastOpenAiCycleUtc: LastOpenAiCycleUtc,
             CycleCount: CycleCount,
             LastAnalysis: LastAnalysis,
             ConversationHistory: ConversationHistory
@@ -84,5 +88,10 @@ public sealed class AgentState
         LastCycleUtc = DateTime.UtcNow;
         CycleCount++;
         LastAnalysis = analysis ?? string.Empty;
+    }
+
+    public void MarkOpenAiCycleAttempt()
+    {
+        LastOpenAiCycleUtc = DateTime.UtcNow;
     }
 }

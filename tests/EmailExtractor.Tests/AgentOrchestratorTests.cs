@@ -87,6 +87,7 @@ public sealed class AgentOrchestratorTests
             OpenAiMaxTokens: 256,
             OpenAiTemperature: 0.1,
             AgentHeartbeatMinutes: 30,
+            AgentMinMinutesBetweenCycleAnalysis: 180,
             AgentMaxContextChars: 10000,
             AgentMaxConversationTurns: 12,
             OutDir: outDir,

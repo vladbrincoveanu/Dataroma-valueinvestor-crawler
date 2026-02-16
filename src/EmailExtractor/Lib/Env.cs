@@ -25,6 +25,12 @@ public static class Env
 
     public static bool GetBool(string key, bool defaultValue)
     {
-        return ParseUtil.ToBool(Get(key, defaultValue ? "1" : "0"), defaultValue);
+        var normalized = Get(key, defaultValue ? "1" : "0").Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "1" or "true" or "yes" or "y" or "on" => true,
+            "0" or "false" or "no" or "n" or "off" => false,
+            _ => defaultValue,
+        };
     }
 }

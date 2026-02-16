@@ -15,7 +15,7 @@ Commands:
   agent-loop        Run continuous agent: pipeline heartbeat + Telegram bot + OpenAI insights
 
 Notes:
-  - Configuration is via env vars and appsettings.json (agent non-secrets).
+  - Configuration is via env vars (.env is auto-loaded if present).
   - For SEC EDGAR calls, set SEC_USER_AGENT="AppName you@domain.com".
   - Use --history-years N (default 5) to control SEC fiscal-year history depth.
   - StockAnalysis fallback returns summary stats; history array stays empty.

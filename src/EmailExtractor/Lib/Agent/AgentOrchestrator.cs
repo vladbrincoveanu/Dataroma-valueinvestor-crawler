@@ -64,6 +64,10 @@ public sealed class AgentOrchestrator
     {
         var text = (msg.Text ?? "").Trim();
         if (text.Length == 0) return;
+        Console.Error.WriteLine($"[agent] Received message #{msg.UpdateId}: {text}");
+
+        if (!text.StartsWith("/status", StringComparison.OrdinalIgnoreCase))
+            await TrySendAsync(msg.ChatId, "Received. Processing...", ct);
 
         if (text.StartsWith("/run", StringComparison.OrdinalIgnoreCase) ||
             text.Contains("run pipeline", StringComparison.OrdinalIgnoreCase))

@@ -10,8 +10,7 @@ public sealed record ChatCompletion(string Content, int PromptTokens, int Comple
 
 public sealed class OpenAiClient : IOpenAiClient
 {
-    private const string CompletionsEndpoint = "https://api.openai.com/v1/chat/completions";
-
+    private readonly string _completionsEndpoint;
     private readonly string _apiKey;
     private readonly string _model;
     private readonly int _maxTokens;
@@ -20,11 +19,17 @@ public sealed class OpenAiClient : IOpenAiClient
 
     public OpenAiClient(
         string apiKey,
+        string baseUrl,
         string model,
         int maxTokens,
         double temperature,
         HttpClient? http = null)
     {
+        var trimmedBase = (baseUrl ?? "").Trim().TrimEnd('/');
+        if (trimmedBase.Length == 0)
+            trimmedBase = "https://api.openai.com/v1";
+
+        _completionsEndpoint = $"{trimmedBase}/chat/completions";
         _apiKey = apiKey;
         _model = model;
         _maxTokens = maxTokens;
@@ -43,8 +48,9 @@ public sealed class OpenAiClient : IOpenAiClient
         };
 
         var json = JsonSerializer.Serialize(requestBody);
-        using var request = new HttpRequestMessage(HttpMethod.Post, CompletionsEndpoint);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        using var request = new HttpRequestMessage(HttpMethod.Post, _completionsEndpoint);
+        if (!string.IsNullOrWhiteSpace(_apiKey))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
         using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);

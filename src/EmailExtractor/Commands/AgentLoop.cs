@@ -37,7 +37,13 @@ public static class AgentLoop
 
         using var http = new HttpClient();
         var telegram = new TelegramBotClient(config.TelegramBotToken, config.TelegramChatId, http);
-        var openAi = new OpenAiClient(config.OpenAiApiKey, config.OpenAiModel, config.OpenAiMaxTokens, config.OpenAiTemperature, http);
+        var openAi = new OpenAiClient(
+            config.OpenAiApiKey,
+            config.OpenAiBaseUrl,
+            config.OpenAiModel,
+            config.OpenAiMaxTokens,
+            config.OpenAiTemperature,
+            http);
         var orchestrator = new AgentOrchestrator(config, telegram, openAi);
 
         try

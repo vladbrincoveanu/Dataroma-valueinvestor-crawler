@@ -13,8 +13,7 @@ This repository contains a .NET CLI solution for generating context docs, rankin
 ## Prereqs
 
 - .NET SDK 10+
-- `.env` (see `.env.example`) for secrets; auto-loaded at startup if present
-- `src/EmailExtractor/appsettings.json` for non-secret agent settings
+- `.env` (see `.env.example`); auto-loaded at startup if present
 
 ## Build
 
@@ -60,22 +59,16 @@ VIC_ENABLE_LOGIN=1 VIC_USERNAME="your_user" VIC_PASSWORD="your_pass" dotnet run 
 
 ## Agent Config
 
-Secrets stay in environment variables:
+All agent settings are env-driven (`.env` is auto-loaded):
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `OPENAI_API_KEY`
-
-Non-secret agent runtime settings are loaded from `src/EmailExtractor/appsettings.json`:
-
-- `Agent.OpenAiModel`
-- `Agent.OpenAiMaxTokens`
-- `Agent.OpenAiTemperature`
-- `Agent.HeartbeatMinutes`
-- `Agent.MinMinutesBetweenCycleAnalysis`
-- `Agent.MaxContextChars`
-- `Agent.MaxConversationTurns`
-
-Optional override:
-
-- `APPSETTINGS_PATH` to point to a different JSON file.
+- `OPENAI_BASE_URL` (default: `https://api.openai.com/v1`)
+- `OPENAI_API_KEY` (required only for OpenAI cloud endpoint)
+- `OPENAI_MODEL`
+- `OPENAI_MAX_TOKENS`
+- `OPENAI_TEMPERATURE`
+- `AGENT_HEARTBEAT_MINUTES`
+- `AGENT_MIN_MINUTES_BETWEEN_CYCLE_ANALYSIS`
+- `AGENT_MAX_CONTEXT_CHARS`
+- `AGENT_MAX_CONVERSATION_TURNS`

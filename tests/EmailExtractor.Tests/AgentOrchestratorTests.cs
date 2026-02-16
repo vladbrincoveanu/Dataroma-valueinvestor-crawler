@@ -83,6 +83,7 @@ public sealed class AgentOrchestratorTests
             TelegramBotToken: "token",
             TelegramChatId: "chat-1",
             OpenAiApiKey: "key",
+            OpenAiBaseUrl: "https://api.openai.com/v1",
             OpenAiModel: "gpt-test",
             OpenAiMaxTokens: 256,
             OpenAiTemperature: 0.1,

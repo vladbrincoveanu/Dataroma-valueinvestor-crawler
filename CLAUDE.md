@@ -101,6 +101,12 @@ For every non-trivial task:
    git branch -d <branch-name>
    ```
 
+Always apply this sequence between tasks:
+
+1. Switch the previous task worktree to `main` and `git pull --ff-only origin main`.
+2. Remove the merged task worktree and delete its local branch.
+3. Create a fresh worktree from `origin/main` on a new branch and start development there.
+
 ## Coding conventions
 
 - All C# naming: `PascalCase` for types/methods/properties, `camelCase` for locals

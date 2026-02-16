@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Net;
 
@@ -73,15 +72,5 @@ public static class TextUtil
 
         Flush();
         return chunks.Count > 0 ? chunks : [body.Substring(0, Math.Min(maxChars, body.Length)).Trim()];
-    }
-
-    public static void WriteAtomic(string path, string content)
-    {
-        var p = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(p)!);
-        var tmp = p + ".tmp";
-        File.WriteAllText(tmp, content, Encoding.UTF8);
-        if (File.Exists(p)) File.Delete(p);
-        File.Move(tmp, p);
     }
 }

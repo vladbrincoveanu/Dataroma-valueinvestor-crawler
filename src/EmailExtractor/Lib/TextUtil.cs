@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Net;
+using System.Text;
 
 namespace EmailExtractor.Lib;
 
@@ -72,5 +73,31 @@ public static class TextUtil
 
         Flush();
         return chunks.Count > 0 ? chunks : [body.Substring(0, Math.Min(maxChars, body.Length)).Trim()];
+    }
+
+    public static void WriteAtomic(string path, string content)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(dir))
+            Directory.CreateDirectory(dir);
+
+        var targetDir = string.IsNullOrWhiteSpace(dir) ? "." : dir;
+        var tempPath = Path.Combine(targetDir, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(tempPath, content ?? string.Empty, Encoding.UTF8);
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                return;
+            }
+            catch
+            {
+                // Fall back to move if replace is unsupported by the filesystem.
+            }
+        }
+
+        File.Move(tempPath, path, overwrite: true);
     }
 }

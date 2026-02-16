@@ -12,9 +12,10 @@ Commands:
   fetch-overview    Fetch overview for tickers (SEC includes up to 5 FY history by default)
   vic-collect-links Collect VIC /idea/... links from ideas pages into a deduped links file
   vic-crawl         Crawl VIC idea pages from links file; optional login; export JSONL + context docs
+  agent-loop        Run continuous agent: pipeline heartbeat + Telegram bot + OpenAI insights
 
 Notes:
-  - Configuration is via env vars.
+  - Configuration is via env vars and appsettings.json (agent non-secrets).
   - For SEC EDGAR calls, set SEC_USER_AGENT="AppName you@domain.com".
   - Use --history-years N (default 5) to control SEC fiscal-year history depth.
   - StockAnalysis fallback returns summary stats; history array stays empty.

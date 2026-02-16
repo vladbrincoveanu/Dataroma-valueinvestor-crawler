@@ -1,9 +1,19 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text;
+using System.Collections.Concurrent;
 using EmailExtractor.Lib;
 
 namespace EmailExtractor.Lib.Agent;
+
+internal enum RoutedIntent
+{
+    Run,
+    Status,
+    Analyze,
+    Task,
+    Chat
+}
 
 public sealed class AgentOrchestrator
 {
@@ -11,6 +21,8 @@ public sealed class AgentOrchestrator
     private readonly ITelegramClient _telegram;
     private readonly IOpenAiClient _openAi;
     private readonly JobManager _jobManager;
+    private readonly ConcurrentDictionary<long, string> _activeTasks = new();
+    private long _taskRunCounter;
 
     public AgentOrchestrator(
         AgentConfig config,
@@ -72,6 +84,30 @@ public sealed class AgentOrchestrator
         if (!text.StartsWith("/status", StringComparison.OrdinalIgnoreCase))
             await TrySendAsync(msg.ChatId, "Received. Processing...", ct);
 
+        if (!text.StartsWith("/", StringComparison.Ordinal))
+        {
+            var (intent, arg) = await RouteIntentAsync(text, ct);
+            switch (intent)
+            {
+                case RoutedIntent.Run:
+                    await HandleRunAsync(msg.ChatId, arg.Length == 0 ? "/run" : $"/run {arg}", ct);
+                    return;
+                case RoutedIntent.Status:
+                    await HandleStatusAsync(msg.ChatId, state, ct);
+                    return;
+                case RoutedIntent.Analyze:
+                    await HandleAnalyzeAsync(msg.ChatId, arg.Length == 0 ? "/analyze" : $"/analyze {arg}", state, ct);
+                    return;
+                case RoutedIntent.Task:
+                    await HandleTaskAsync(msg.ChatId, arg.Length == 0 ? "/task help" : $"/task {arg}", ct);
+                    return;
+                case RoutedIntent.Chat:
+                default:
+                    await HandleFreeFormAsync(msg.ChatId, text, state, ct);
+                    return;
+            }
+        }
+
         if (text.StartsWith("/jobs", StringComparison.OrdinalIgnoreCase))
         {
             await HandleJobsAsync(msg.ChatId, ct);
@@ -93,9 +129,70 @@ public sealed class AgentOrchestrator
         {
             await HandleAnalyzeAsync(msg.ChatId, text, state, ct);
         }
+        else if (text.StartsWith("/task", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleTaskAsync(msg.ChatId, text, ct);
+        }
         else
         {
             await HandleFreeFormAsync(msg.ChatId, text, state, ct);
+        }
+    }
+
+    private async Task<(RoutedIntent Intent, string Argument)> RouteIntentAsync(string text, CancellationToken ct)
+    {
+        var system = """
+You route Telegram user messages to one intent.
+Return exactly one line:
+INTENT=<run|status|analyze|task|chat>;ARG=<text>
+Rules:
+- status: asking status/health/what is running
+- run: asking to run/start pipeline/job
+- analyze: explicit ticker/company analysis request
+- task: asking to list/start background tasks/jobs/pipelines
+- chat: everything else
+For status/chat use empty ARG.
+For analyze ARG should be ticker if clear (e.g. AAPL), otherwise empty.
+For run/task keep ARG concise.
+""";
+        var user = $"Message: {text}";
+
+        try
+        {
+            var completion = await _openAi.ChatAsync(
+                [new ChatMessage("system", system), new ChatMessage("user", user)],
+                ct);
+
+            var raw = (completion.Content ?? "").Trim();
+            if (raw.Length == 0) return (RoutedIntent.Chat, "");
+
+            var intent = RoutedIntent.Chat;
+            var argument = "";
+            foreach (var part in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                var key = part[..eq].Trim().ToLowerInvariant();
+                var value = part[(eq + 1)..].Trim();
+                if (key == "intent")
+                    intent = value.ToLowerInvariant() switch
+                    {
+                        "run" => RoutedIntent.Run,
+                        "status" => RoutedIntent.Status,
+                        "analyze" => RoutedIntent.Analyze,
+                        "task" => RoutedIntent.Task,
+                        _ => RoutedIntent.Chat
+                    };
+                else if (key == "arg")
+                    argument = value;
+            }
+
+            return (intent, argument);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[agent] Intent routing fallback: {ex.Message}");
+            return (RoutedIntent.Chat, "");
         }
     }
 
@@ -326,6 +423,162 @@ public sealed class AgentOrchestrator
             Console.Error.WriteLine($"[agent] Chat error: {ex.Message}");
             await TrySendAsync(chatId, $"Error: {ex.Message}", ct);
         }
+    }
+
+    private async Task HandleTaskAsync(string chatId, string text, CancellationToken ct)
+    {
+        try
+        {
+            var args = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (args.Length == 1 || string.Equals(args[1], "help", StringComparison.OrdinalIgnoreCase))
+            {
+                await _telegram.SendMessageAsync(chatId, BuildTaskHelp(), ct);
+                return;
+            }
+
+            if (string.Equals(args[1], "list", StringComparison.OrdinalIgnoreCase))
+            {
+                await _telegram.SendMessageAsync(chatId, BuildTaskList(), ct);
+                return;
+            }
+
+            if (args.Length >= 3 && string.Equals(args[1], "pipeline", StringComparison.OrdinalIgnoreCase))
+            {
+                var pipelineName = args[2];
+                StartBackgroundPipeline(chatId, pipelineName, ct);
+                return;
+            }
+
+            var jobName = args.Length >= 3 && string.Equals(args[1], "run", StringComparison.OrdinalIgnoreCase)
+                ? args[2]
+                : args[1];
+            StartBackgroundJob(chatId, jobName, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[agent] /task error: {ex.Message}");
+            await TrySendAsync(chatId, $"Error: {ex.Message}", ct);
+        }
+    }
+
+    private string BuildTaskHelp()
+    {
+        return string.Join(
+            "\n",
+            "Task commands",
+            "/task list",
+            "/task <job>",
+            "/task run <job>",
+            "/task pipeline <name>",
+            "Use /task list to see available jobs and pipelines.");
+    }
+
+    private string BuildTaskList()
+    {
+        var jobs = JobRegistry.All().Values.OrderBy(j => j.Name).ToList();
+        var pipelines = JobRegistry.Pipelines().OrderBy(p => p.Key).ToList();
+        var active = _activeTasks.OrderBy(p => p.Key).ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Available jobs:");
+        foreach (var job in jobs)
+            sb.AppendLine($"- {job.Name}: {job.Description}");
+
+        sb.AppendLine();
+        sb.AppendLine("Available pipelines:");
+        foreach (var pipeline in pipelines)
+            sb.AppendLine($"- {pipeline.Key}: {string.Join(" -> ", pipeline.Value)}");
+
+        sb.AppendLine();
+        sb.AppendLine(active.Count == 0 ? "Active tasks: none" : "Active tasks:");
+        foreach (var entry in active)
+            sb.AppendLine($"- #{entry.Key}: {entry.Value}");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private void StartBackgroundJob(string chatId, string jobName, CancellationToken ct)
+    {
+        var jobs = JobRegistry.All();
+        if (!jobs.TryGetValue(jobName, out var job))
+        {
+            _ = TrySendAsync(chatId, $"Unknown job '{jobName}'. Use /task list.", ct);
+            return;
+        }
+
+        StartBackgroundTask(
+            chatId,
+            $"job {job.Name}",
+            ct,
+            async token =>
+            {
+                var exitCode = await job.Execute(token);
+                if (exitCode != 0)
+                    throw new Exception($"Job '{job.Name}' failed with exit code {exitCode}.");
+            });
+    }
+
+    private void StartBackgroundPipeline(string chatId, string pipelineName, CancellationToken ct)
+    {
+        var pipelines = JobRegistry.Pipelines();
+        if (!pipelines.TryGetValue(pipelineName, out var stages))
+        {
+            _ = TrySendAsync(chatId, $"Unknown pipeline '{pipelineName}'. Use /task list.", ct);
+            return;
+        }
+
+        var jobs = JobRegistry.All();
+        StartBackgroundTask(
+            chatId,
+            $"pipeline {pipelineName}",
+            ct,
+            async token =>
+            {
+                foreach (var stage in stages)
+                {
+                    if (!jobs.TryGetValue(stage, out var job))
+                        throw new Exception($"Pipeline '{pipelineName}' references unknown job '{stage}'.");
+
+                    await TrySendAsync(chatId, $"Pipeline {pipelineName}: running {stage}...", token);
+                    var exitCode = await job.Execute(token);
+                    if (exitCode != 0)
+                        throw new Exception($"Pipeline '{pipelineName}' failed at '{stage}' with exit code {exitCode}.");
+                }
+            });
+    }
+
+    private void StartBackgroundTask(
+        string chatId,
+        string taskName,
+        CancellationToken shutdownToken,
+        Func<CancellationToken, Task> run)
+    {
+        var taskId = Interlocked.Increment(ref _taskRunCounter);
+        _activeTasks[taskId] = taskName;
+
+        _ = Task.Run(async () =>
+        {
+            await TrySendAsync(chatId, $"Started {taskName} (#{taskId}) in background.", shutdownToken);
+            try
+            {
+                await run(shutdownToken);
+                await TrySendAsync(chatId, $"{taskName} (#{taskId}) completed.", shutdownToken);
+            }
+            catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
+            {
+                await TrySendAsync(chatId, $"{taskName} (#{taskId}) cancelled.", CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[agent] Background task {taskName} (#{taskId}) error: {ex.Message}");
+                await TrySendAsync(chatId, $"{taskName} (#{taskId}) failed: {ex.Message}", CancellationToken.None);
+            }
+            finally
+            {
+                _activeTasks.TryRemove(taskId, out _);
+            }
+        }, CancellationToken.None);
     }
 
     // ── Pipeline cycle ─────────────────────────────────────────────────────────

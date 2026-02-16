@@ -6,7 +6,10 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        if (args.Length == 0 || args[0] is "-h" or "--help")
+        if (args.Length == 0)
+            return await AgentLoop.Run([]);
+
+        if (args[0] is "-h" or "--help")
         {
             Console.WriteLine(Usage.Text);
             return 0;

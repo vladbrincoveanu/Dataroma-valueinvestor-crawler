@@ -7,7 +7,7 @@ This repository contains a .NET CLI solution for generating context docs, rankin
 - `Program.cs` is a thin command router.
 - Each command in `src/EmailExtractor/Commands/` is a focused runner.
 - `Lib/` contains shared helpers (`Args`, `TextUtil`, `Tickers`) and provider clients (`SecEdgarClient`, `StockAnalysisClient`).
-- `SecEdgarClient` fetches structured SEC company facts and currently returns latest FY overview metrics.
+- `SecEdgarClient` fetches structured SEC company facts and returns latest FY metrics plus fiscal-year history (default 5 years).
 - `StockAnalysisClient` is a fallback scraper for summary stats.
 
 ## Prereqs
@@ -46,7 +46,7 @@ Examples:
 ```bash
 dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- dataroma-rss
 dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- extract-tickers --top 50 --min-score 3 --out out/important_tickers.json
-SEC_USER_AGENT="EmailExtractor you@domain.com" dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- fetch-overview --in out/important_tickers.json --out out/financial_overview.jsonl
+SEC_USER_AGENT="EmailExtractor you@domain.com" dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- fetch-overview --in out/important_tickers.json --out out/financial_overview.jsonl --history-years 5
 ```
 
 VIC crawl examples:

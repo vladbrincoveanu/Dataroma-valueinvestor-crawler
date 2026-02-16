@@ -13,6 +13,7 @@ public static class FetchFinancialOverview
         var inPath = a.Get("in", "out/important_tickers.json");
         var outPath = a.Get("out", "out/financial_overview.jsonl");
         var provider = a.Get("provider", "sec_then_stockanalysis").Trim().ToLowerInvariant();
+        var historyYears = Math.Max(1, a.GetInt("history-years", 5));
 
         if (!File.Exists(inPath)) throw new Exception($"Missing input file: {inPath}");
         var tickers = LoadTickers(inPath);
@@ -34,9 +35,9 @@ public static class FetchFinancialOverview
             {
                 JsonNode rec = provider switch
                 {
-                    "sec" => await FetchSec(sec, t),
-                    "stockanalysis" => await FetchStockAnalysis(sa, t),
-                    "sec_then_stockanalysis" => await FetchSecThenStockAnalysis(sec, sa, t),
+                    "sec" => await FetchSec(sec, t, historyYears),
+                    "stockanalysis" => await FetchStockAnalysis(sa, t, historyYears),
+                    "sec_then_stockanalysis" => await FetchSecThenStockAnalysis(sec, sa, t, historyYears),
                     _ => throw new Exception($"Unknown provider: {provider}")
                 };
 
@@ -76,20 +77,20 @@ public static class FetchFinancialOverview
         return outList;
     }
 
-    private static async Task<JsonNode> FetchSec(SecEdgarClient? sec, string ticker)
+    private static async Task<JsonNode> FetchSec(SecEdgarClient? sec, string ticker, int historyYears)
     {
         if (sec is null) throw new Exception("SEC_USER_AGENT not set; cannot use SEC provider.");
         var cik = await sec.CikForTicker(ticker);
         if (string.IsNullOrWhiteSpace(cik)) throw new Exception($"No CIK found for ticker {ticker}");
         var facts = await sec.CompanyFacts(cik);
         if (facts is null) throw new Exception($"No company facts for CIK {cik}");
-        var ov = SecEdgarClient.BuildOverview(ticker, facts, cik);
+        var ov = SecEdgarClient.BuildOverview(ticker, facts, cik, historyYears);
         var node = JsonSerializer.SerializeToNode(ov)!;
         node["provider"] = "sec";
         return node;
     }
 
-    private static async Task<JsonNode> FetchStockAnalysis(StockAnalysisClient sa, string ticker)
+    private static async Task<JsonNode> FetchStockAnalysis(StockAnalysisClient sa, string ticker, int historyYears)
     {
         var ov = await sa.FetchOverview(ticker);
         return new JsonObject
@@ -97,22 +98,23 @@ public static class FetchFinancialOverview
             ["ticker"] = ov.Ticker,
             ["provider"] = "stockanalysis",
             ["url"] = ov.Url,
-            ["stats"] = JsonSerializer.SerializeToNode(ov.Stats)!
+            ["stats"] = JsonSerializer.SerializeToNode(ov.Stats)!,
+            ["history_years_requested"] = historyYears,
+            ["history"] = new JsonArray()
         };
     }
 
-    private static async Task<JsonNode> FetchSecThenStockAnalysis(SecEdgarClient? sec, StockAnalysisClient sa, string ticker)
+    private static async Task<JsonNode> FetchSecThenStockAnalysis(SecEdgarClient? sec, StockAnalysisClient sa, string ticker, int historyYears)
     {
         try
         {
             if (sec is not null)
-                return await FetchSec(sec, ticker);
+                return await FetchSec(sec, ticker, historyYears);
         }
         catch
         {
             // fall through
         }
-        return await FetchStockAnalysis(sa, ticker);
+        return await FetchStockAnalysis(sa, ticker, historyYears);
     }
 }
-

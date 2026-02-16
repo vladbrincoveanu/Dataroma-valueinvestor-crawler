@@ -1,7 +1,19 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Globalization;
 
 namespace EmailExtractor.Lib.Overview;
+
+public sealed record SecYearMetrics(
+    int FiscalYear,
+    double? Revenue,
+    double? GrossProfit,
+    double? OperatingIncome,
+    double? NetIncome,
+    double? GrossMargin,
+    double? OperatingMargin,
+    double? NetMargin
+);
 
 public sealed record SecOverview(
     string Ticker,
@@ -15,7 +27,8 @@ public sealed record SecOverview(
     double? NetIncome,
     double? GrossMargin,
     double? OperatingMargin,
-    double? NetMargin
+    double? NetMargin,
+    IReadOnlyList<SecYearMetrics> History
 );
 
 public sealed class SecEdgarClient
@@ -57,18 +70,52 @@ public sealed class SecEdgarClient
         return await GetJson(url, cachePath);
     }
 
-    public static SecOverview BuildOverview(string ticker, JsonNode facts, string cik10)
+    public static SecOverview BuildOverview(string ticker, JsonNode facts, string cik10, int historyYears = 5)
     {
-        (int? fyR, double? revenue, string? unitR) = LatestFyValue(facts, "Revenues");
-        (int? fyGp, double? grossProfit, string? unitGp) = LatestFyValue(facts, "GrossProfit");
-        (int? fyOi, double? operatingIncome, string? unitOi) = LatestFyValue(facts, "OperatingIncomeLoss");
-        (int? fyNi, double? netIncome, string? unitNi) = LatestFyValue(facts, "NetIncomeLoss");
+        var revenueSeries = CollectFySeries(facts, "Revenues");
+        var grossProfitSeries = CollectFySeries(facts, "GrossProfit");
+        var operatingIncomeSeries = CollectFySeries(facts, "OperatingIncomeLoss");
+        var netIncomeSeries = CollectFySeries(facts, "NetIncomeLoss");
 
-        int? fy = fyR ?? fyGp ?? fyOi ?? fyNi;
-        var currency = unitR ?? unitGp ?? unitOi ?? unitNi;
-        var name = facts?["entityName"]?.GetValue<string>();
+        var years = revenueSeries.Values.Keys
+            .Concat(grossProfitSeries.Values.Keys)
+            .Concat(operatingIncomeSeries.Values.Keys)
+            .Concat(netIncomeSeries.Values.Keys)
+            .Distinct()
+            .OrderByDescending(y => y)
+            .Take(Math.Max(1, historyYears))
+            .ToList();
 
         double? Margin(double? n, double? d) => (n is null || d is null || d == 0) ? null : (n / d);
+
+        var history = years
+            .Select(y =>
+            {
+                var revenue = revenueSeries.Values.TryGetValue(y, out var r) ? r : null;
+                var grossProfit = grossProfitSeries.Values.TryGetValue(y, out var gp) ? gp : null;
+                var operatingIncome = operatingIncomeSeries.Values.TryGetValue(y, out var oi) ? oi : null;
+                var netIncome = netIncomeSeries.Values.TryGetValue(y, out var ni) ? ni : null;
+                return new SecYearMetrics(
+                    FiscalYear: y,
+                    Revenue: revenue,
+                    GrossProfit: grossProfit,
+                    OperatingIncome: operatingIncome,
+                    NetIncome: netIncome,
+                    GrossMargin: Margin(grossProfit, revenue),
+                    OperatingMargin: Margin(operatingIncome, revenue),
+                    NetMargin: Margin(netIncome, revenue)
+                );
+            })
+            .ToList();
+
+        var latest = history.FirstOrDefault();
+        int? fy = latest?.FiscalYear;
+        var unitR = revenueSeries.Unit;
+        var unitGp = grossProfitSeries.Unit;
+        var unitOi = operatingIncomeSeries.Unit;
+        var unitNi = netIncomeSeries.Unit;
+        var currency = unitR ?? unitGp ?? unitOi ?? unitNi;
+        var name = facts?["entityName"]?.GetValue<string>();
 
         return new SecOverview(
             Ticker: ticker.Trim().ToUpperInvariant(),
@@ -76,13 +123,14 @@ public sealed class SecEdgarClient
             Name: name,
             FiscalYear: fy,
             Currency: currency,
-            Revenue: revenue,
-            GrossProfit: grossProfit,
-            OperatingIncome: operatingIncome,
-            NetIncome: netIncome,
-            GrossMargin: Margin(grossProfit, revenue),
-            OperatingMargin: Margin(operatingIncome, revenue),
-            NetMargin: Margin(netIncome, revenue)
+            Revenue: latest?.Revenue,
+            GrossProfit: latest?.GrossProfit,
+            OperatingIncome: latest?.OperatingIncome,
+            NetIncome: latest?.NetIncome,
+            GrossMargin: latest?.GrossMargin,
+            OperatingMargin: latest?.OperatingMargin,
+            NetMargin: latest?.NetMargin,
+            History: history
         );
     }
 
@@ -132,17 +180,22 @@ public sealed class SecEdgarClient
         _lastReq = DateTimeOffset.UtcNow;
     }
 
-    private static (int? fy, double? val, string? unit) LatestFyValue(JsonNode facts, string tag)
-    {
-        // facts.facts["us-gaap"][tag].units[unit] is an array of objects.
-        var units = facts?["facts"]?["us-gaap"]?[tag]?["units"] as JsonObject;
-        if (units is null) return (null, null, null);
+    private sealed record FySeries(Dictionary<int, double?> Values, string? Unit);
 
-        (int fy, string end, double val, string unit)? best = null;
+    private static FySeries CollectFySeries(JsonNode facts, string tag)
+    {
+        var units = facts?["facts"]?["us-gaap"]?[tag]?["units"] as JsonObject;
+        if (units is null) return new FySeries([], null);
+
+        Dictionary<int, double?> bestValues = [];
+        string? bestUnit = null;
+        var bestCount = -1;
+
         foreach (var unitK in units)
         {
             var unit = unitK.Key;
             if (unitK.Value is not JsonArray arr) continue;
+            Dictionary<int, (string end, double val)> byYear = [];
             foreach (var itNode in arr)
             {
                 if (itNode is not JsonObject it) continue;
@@ -153,14 +206,19 @@ public sealed class SecEdgarClient
 
                 if (!int.TryParse(it["fy"]?.ToString(), out var fy)) continue;
                 var end = it["end"]?.GetValue<string>() ?? "";
-                if (!double.TryParse(it["val"]?.ToString(), out var val)) continue;
+                if (!double.TryParse(it["val"]?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var val)) continue;
 
-                var cand = (fy, end, val, unit);
-                if (best is null || cand.fy > best.Value.fy || (cand.fy == best.Value.fy && string.CompareOrdinal(cand.end, best.Value.end) > 0))
-                    best = cand;
+                if (!byYear.TryGetValue(fy, out var current) || string.CompareOrdinal(end, current.end) > 0)
+                    byYear[fy] = (end, val);
             }
+
+            if (byYear.Count <= bestCount) continue;
+
+            bestCount = byYear.Count;
+            bestUnit = unit;
+            bestValues = byYear.ToDictionary(x => x.Key, x => (double?)x.Value.val);
         }
-        return best is null ? (null, null, null) : (best.Value.fy, best.Value.val, best.Value.unit);
+
+        return new FySeries(bestValues, bestUnit);
     }
 }
-

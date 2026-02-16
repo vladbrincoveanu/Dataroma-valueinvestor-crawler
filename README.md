@@ -2,6 +2,14 @@
 
 This repository contains a .NET CLI solution for generating context docs, ranking tickers, and fetching financial overviews.
 
+## Architecture
+
+- `Program.cs` is a thin command router.
+- Each command in `src/EmailExtractor/Commands/` is a focused runner.
+- `Lib/` contains shared helpers (`Args`, `TextUtil`, `Tickers`) and provider clients (`SecEdgarClient`, `StockAnalysisClient`).
+- `SecEdgarClient` fetches structured SEC company facts and currently returns latest FY overview metrics.
+- `StockAnalysisClient` is a fallback scraper for summary stats.
+
 ## Prereqs
 
 - .NET SDK 10+
@@ -17,6 +25,12 @@ dotnet build EmailExtractor.sln
 
 ```bash
 dotnet test EmailExtractor.sln
+```
+
+Live VIC smoke test (opt-in, network):
+
+```bash
+RUN_LIVE_VIC_TESTS=1 dotnet test EmailExtractor.sln
 ```
 
 ## Run

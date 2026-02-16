@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using EmailExtractor.Lib;
@@ -10,6 +11,7 @@ namespace EmailExtractor.Commands;
 public static class DataromaRssExport
 {
     private static readonly Regex TickerRe = new(@"\b[A-Z]{1,5}(?:\.[A-Z])?\b", RegexOptions.Compiled);
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
     public static async Task<int> Run(string[] argv)
     {
@@ -54,7 +56,7 @@ public static class DataromaRssExport
             }
         }
 
-        var moves = new List<Dictionary<string, object?>>();
+        var moves = new List<DataromaMove>();
         foreach (var it in items)
         {
             var title = ChildText(it, "title");
@@ -78,22 +80,21 @@ public static class DataromaRssExport
             var reduced = mv.TryGetValue("reduced", out var r) ? r : new List<string>();
             var soldOut = mv.TryGetValue("sold_out", out var so) ? so : new List<string>();
 
-            moves.Add(new Dictionary<string, object?>
-            {
-                ["id"] = sid,
-                ["investor"] = InferInvestor(title),
-                ["title"] = title,
-                ["link"] = link,
-                ["published_utc"] = publishedUtc,
-                ["bought"] = bought,
-                ["added_to"] = addedTo,
-                ["reduced"] = reduced,
-                ["sold_out"] = soldOut,
-                ["raw_text"] = rawText,
-            });
+            moves.Add(new DataromaMove(
+                Id: sid,
+                Investor: InferInvestor(title),
+                Title: title,
+                Link: link,
+                PublishedUtc: publishedUtc,
+                Bought: bought,
+                AddedTo: addedTo,
+                Reduced: reduced,
+                SoldOut: soldOut,
+                RawText: rawText
+            ));
         }
 
-        moves = moves.OrderBy(m => (string)m["published_utc"]!).ToList();
+        moves = moves.OrderBy(m => m.PublishedUtc, StringComparer.Ordinal).ToList();
         Console.WriteLine($"Parsed {moves.Count} items (since {sinceDt:yyyy-MM-dd}).");
 
         var jsonlMode = append && File.Exists(outJsonl) ? FileMode.Append : FileMode.Create;
@@ -102,23 +103,16 @@ public static class DataromaRssExport
         {
             foreach (var obj in moves)
             {
-                var line = JsonSerializer.Serialize(obj);
+                var line = JsonSerializer.Serialize(obj, JsonOptions);
                 sw.WriteLine(line);
             }
         }
 
-        // Render context from the (new) moves only.
         using (var f = new StreamWriter(outCtx, append: append && File.Exists(outCtx), encoding: new UTF8Encoding(false)))
         {
             for (var i = 0; i < moves.Count; i++)
             {
                 var obj = moves[i];
-                var investor = (string?)obj["investor"] ?? "";
-                var title = (string?)obj["title"] ?? "";
-                var link = (string?)obj["link"] ?? "";
-                var published = (string?)obj["published_utc"] ?? "";
-                var raw = (string?)obj["raw_text"] ?? "";
-
                 var body = BuildMoveBody(obj);
                 var chunks = TextUtil.ChunkText(body, maxChars);
                 for (var ci = 0; ci < chunks.Count; ci++)
@@ -127,23 +121,17 @@ public static class DataromaRssExport
                         ? $"=== DOC dataroma/{i + 1:00000} part {ci + 1}/{chunks.Count} ==="
                         : $"=== DOC dataroma/{i + 1:00000} ===";
                     f.WriteLine(header);
-                    f.WriteLine($"investor: {investor}");
-                    if (published.Length > 0) f.WriteLine($"date_utc: {published}");
-                    if (title.Length > 0) f.WriteLine($"title: {title}");
-                    if (link.Length > 0) f.WriteLine($"link: {link}");
-
-                    // optional short metadata lines mirroring the python context
-                    var bought = (List<string>)obj["bought"]!;
-                    var addedTo = (List<string>)obj["added_to"]!;
-                    if (bought.Count > 0) f.WriteLine($"bought: {string.Join(", ", bought)}");
-                    if (addedTo.Count > 0) f.WriteLine($"added_to: {string.Join(", ", addedTo)}");
+                    f.WriteLine($"investor: {obj.Investor}");
+                    if (obj.PublishedUtc.Length > 0) f.WriteLine($"date_utc: {obj.PublishedUtc}");
+                    if (obj.Title.Length > 0) f.WriteLine($"title: {obj.Title}");
+                    if (obj.Link.Length > 0) f.WriteLine($"link: {obj.Link}");
+                    if (obj.Bought.Count > 0) f.WriteLine($"bought: {string.Join(", ", obj.Bought)}");
+                    if (obj.AddedTo.Count > 0) f.WriteLine($"added_to: {string.Join(", ", obj.AddedTo)}");
 
                     f.WriteLine("---");
                     f.WriteLine(TextUtil.NormWs(chunks[ci]));
                     f.WriteLine();
                 }
-
-                _ = raw; // keep parity with python JSONL; context uses derived body
             }
         }
 
@@ -164,20 +152,20 @@ public static class DataromaRssExport
         return null;
     }
 
-    private static string BuildMoveBody(Dictionary<string, object?> obj)
+    private static string BuildMoveBody(DataromaMove obj)
     {
         var sb = new StringBuilder();
-        void Add(string label, string key)
+        static void Add(StringBuilder text, string label, List<string> values)
         {
-            if (obj[key] is not List<string> list || list.Count == 0) return;
-            sb.AppendLine(label + ":");
-            sb.AppendLine(string.Join(" ", list));
+            if (values.Count == 0) return;
+            text.AppendLine(label + ":");
+            text.AppendLine(string.Join(" ", values));
         }
 
-        Add("Bought", "bought");
-        Add("Added to", "added_to");
-        Add("Reduced", "reduced");
-        Add("Sold out", "sold_out");
+        Add(sb, "Bought", obj.Bought);
+        Add(sb, "Added to", obj.AddedTo);
+        Add(sb, "Reduced", obj.Reduced);
+        Add(sb, "Sold out", obj.SoldOut);
         return sb.ToString().Trim();
     }
 
@@ -247,4 +235,17 @@ public static class DataromaRssExport
 
         return moves;
     }
+
+    private sealed record DataromaMove(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("investor")] string Investor,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("link")] string Link,
+        [property: JsonPropertyName("published_utc")] string PublishedUtc,
+        [property: JsonPropertyName("bought")] List<string> Bought,
+        [property: JsonPropertyName("added_to")] List<string> AddedTo,
+        [property: JsonPropertyName("reduced")] List<string> Reduced,
+        [property: JsonPropertyName("sold_out")] List<string> SoldOut,
+        [property: JsonPropertyName("raw_text")] string RawText
+    );
 }

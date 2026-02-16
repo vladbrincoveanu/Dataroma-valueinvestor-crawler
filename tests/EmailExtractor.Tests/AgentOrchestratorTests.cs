@@ -5,6 +5,63 @@ namespace EmailExtractor.Tests;
 public sealed class AgentOrchestratorTests
 {
     [Fact]
+    public async Task RunAsync_TaskListCommand_ReturnsRegisteredJobsAndPipelines()
+    {
+        using var temp = new TempDir();
+        var statePath = Path.Combine(temp.Path, "agent_state.json");
+        var config = CreateConfig(temp.Path, statePath);
+
+        var cts = new CancellationTokenSource();
+        var telegram = new FakeTelegramClient(
+            polls:
+            [
+                [new TelegramMessage(1, "chat-1", "/task list", DateTime.UtcNow)],
+                []
+            ],
+            onSecondPoll: () => cts.Cancel());
+        var openAi = new FakeOpenAiClient(["cycle-analysis"]);
+
+        var sut = new AgentOrchestrator(
+            config,
+            telegram,
+            openAi,
+            (_, _) => Task.FromResult(new PipelineResult(true, [], DateTime.UtcNow)));
+
+        await sut.RunAsync(cts.Token);
+
+        Assert.Contains(telegram.SentMessages, m => m.Text.Contains("Available jobs:", StringComparison.Ordinal));
+        Assert.Contains(telegram.SentMessages, m => m.Text.Contains("Available pipelines:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunAsync_TaskUnknownJob_ReturnsHelpfulError()
+    {
+        using var temp = new TempDir();
+        var statePath = Path.Combine(temp.Path, "agent_state.json");
+        var config = CreateConfig(temp.Path, statePath);
+
+        var cts = new CancellationTokenSource();
+        var telegram = new FakeTelegramClient(
+            polls:
+            [
+                [new TelegramMessage(1, "chat-1", "/task not-a-real-job", DateTime.UtcNow)],
+                []
+            ],
+            onSecondPoll: () => cts.Cancel());
+        var openAi = new FakeOpenAiClient(["cycle-analysis"]);
+
+        var sut = new AgentOrchestrator(
+            config,
+            telegram,
+            openAi,
+            (_, _) => Task.FromResult(new PipelineResult(true, [], DateTime.UtcNow)));
+
+        await sut.RunAsync(cts.Token);
+
+        Assert.Contains(telegram.SentMessages, m => m.Text.Contains("Unknown job 'not-a-real-job'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RunAsync_FullLoop_ProcessesMessage_RunsPipeline_AndPersistsState()
     {
         using var temp = new TempDir();

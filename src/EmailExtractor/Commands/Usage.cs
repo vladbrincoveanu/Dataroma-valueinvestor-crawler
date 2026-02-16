@@ -15,7 +15,9 @@ Commands:
   agent-loop        Run continuous agent: pipeline heartbeat + Telegram bot + OpenAI insights
 
 Notes:
+  - Running with no command starts `agent-loop` by default.
   - Agent config uses appsettings + user-secrets (env vars still supported as fallback).
+  - Use Telegram `/task` commands to run background jobs and pipelines.
   - For SEC EDGAR calls, set SEC_USER_AGENT="AppName you@domain.com".
   - Use --history-years N (default 5) to control SEC fiscal-year history depth.
   - StockAnalysis fallback returns summary stats; history array stays empty.

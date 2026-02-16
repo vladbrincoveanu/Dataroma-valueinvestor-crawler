@@ -22,6 +22,11 @@ Keep common tasks discoverable via `Makefile` and `.NET` commands:
 
 Example target naming: `make fmt`, `make typecheck`, `make ci`.
 
+## Agent Runtime Mode
+
+- Default runtime mode is `agent-loop`: running the app with no command should start agent mode.
+- In agent mode, new work should be triggerable via chat commands as background tasks (non-blocking), so the agent can continue handling messages while jobs run.
+
 ## Coding Style & Naming Conventions
 
 - Indentation: 2 spaces for YAML/JSON/Markdown; 4 spaces for C#.
@@ -42,6 +47,8 @@ Example target naming: `make fmt`, `make typecheck`, `make ci`.
 - Tests live in `tests/` and are deterministic (no real network calls; use fixtures in `assets/`).
 - Naming: follow the selected .NET test framework conventions.
 - Add regression tests for bugs before fixing them.
+- Mandatory for every code change: add or update unit tests, and extend integration tests when the behavior crosses component boundaries.
+- Mandatory at task end: rerun full build + full test suite before reporting completion.
 
 ## Commit & Pull Request Guidelines
 
@@ -57,10 +64,18 @@ PRs should include:
 
 Required workflow for new tasks:
 
+- Hard gate: do not start coding, run implementation commands, or edit files until this workflow is completed.
 - Start every new task in a new git worktree (branch from `main`).
 - Before each iteration, pull latest `main` and merge it into the local working branch.
 - Before marking work complete, rerun relevant checks (`make test`, `dotnet test`, lint/build as applicable).
 - When the task is fully complete and checks pass, open a PR targeting `main`.
+
+Required start-of-task sequence (always):
+
+1. Pull latest `main`.
+2. Create a new worktree for the task.
+3. Create/switch to a new task branch in that worktree.
+4. Only then start implementation.
 
 ## Security & Configuration Tips
 

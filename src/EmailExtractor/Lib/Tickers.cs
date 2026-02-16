@@ -8,7 +8,6 @@ public sealed record RankedTicker(string Ticker, double Score, Dictionary<string
 
 public static class Tickers
 {
-    private static readonly Regex TickerRe = new(@"\b[A-Z]{1,5}(?:\.[A-Z])?\b", RegexOptions.Compiled);
     private static readonly Regex ExchangePrefixRe = new(@"\b(?:NYSE|NASDAQ|AMEX|LSE|TSX|ASX|FWB|XETRA)\s*:\s*([A-Z]{1,5}(?:\.[A-Z])?)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex DollarRe = new(@"\$([A-Z]{1,5}(?:\.[A-Z])?)\b", RegexOptions.Compiled);
     private static readonly Regex SimbolParenRe = new(@"\(\s*simbol\s+([A-Z]{1,5}(?:\.[A-Z])?)\s*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -35,22 +34,21 @@ public static class Tickers
         whitelist ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         text = (text ?? "").Replace("\r\n", "\n").Replace("\r", "\n");
 
-        var cand = new List<(string t, string src)>();
-        foreach (Match m in ExchangePrefixRe.Matches(text)) cand.Add((m.Groups[1].Value, "exchange"));
-        foreach (Match m in DollarRe.Matches(text)) cand.Add((m.Groups[1].Value, "dollar"));
-        foreach (Match m in SimbolParenRe.Matches(text)) cand.Add((m.Groups[1].Value, "simbol_paren"));
-        foreach (Match m in TickerAfterKeywordRe.Matches(text)) cand.Add((m.Groups[1].Value.TrimStart('$'), "keyword"));
+        var cand = new List<string>();
+        foreach (Match m in ExchangePrefixRe.Matches(text)) cand.Add(m.Groups[1].Value);
+        foreach (Match m in DollarRe.Matches(text)) cand.Add(m.Groups[1].Value);
+        foreach (Match m in SimbolParenRe.Matches(text)) cand.Add(m.Groups[1].Value);
+        foreach (Match m in TickerAfterKeywordRe.Matches(text)) cand.Add(m.Groups[1].Value.TrimStart('$'));
 
         var outList = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (t0, src) in cand)
+        foreach (var t0 in cand)
         {
             var t = Normalize(t0);
             if (t.Length == 0) continue;
             if (FoxStopwords.Contains(t)) continue;
             if (t.Length == 1) continue;
-            if (whitelist.Count > 0 && src is not ("exchange" or "dollar" or "simbol_paren" or "keyword") && !whitelist.Contains(t))
-                continue;
+            if (whitelist.Count > 0 && !whitelist.Contains(t)) continue;
             if (seen.Add(t)) outList.Add(t);
         }
         return outList;
@@ -164,4 +162,3 @@ public static class Tickers
         return null;
     }
 }
-

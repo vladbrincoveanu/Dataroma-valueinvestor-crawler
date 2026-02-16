@@ -10,6 +10,7 @@ namespace EmailExtractor.Commands;
 
 public static class DataromaRssExport
 {
+    private const string UserAgent = "Mozilla/5.0 (compatible; DataromaRssExport/1.0)";
     private static readonly Regex TickerRe = new(@"\b[A-Z]{1,5}(?:\.[A-Z])?\b", RegexOptions.Compiled);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
@@ -31,12 +32,13 @@ public static class DataromaRssExport
         Console.WriteLine($"Fetching RSS: {rssUrl}");
 
         using var http = new HttpClient();
-        http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (compatible; DataromaRssExport/1.0)");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", UserAgent);
         var xml = await http.GetStringAsync(rssUrl);
         var rssDoc = XDocument.Parse(xml);
         var items = rssDoc.Descendants().Where(x => x.Name.LocalName == "item").ToList();
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var invalidJsonLineCount = 0;
         if (append && File.Exists(outJsonl))
         {
             foreach (var line in File.ReadLines(outJsonl))
@@ -52,9 +54,14 @@ public static class DataromaRssExport
                         if (id.Length > 0) seen.Add(id);
                     }
                 }
-                catch { }
+                catch (JsonException)
+                {
+                    invalidJsonLineCount++;
+                }
             }
         }
+        if (invalidJsonLineCount > 0)
+            Console.Error.WriteLine($"warn: skipped {invalidJsonLineCount} invalid JSONL rows in {outJsonl} while loading append state.");
 
         var moves = new List<DataromaMove>();
         foreach (var it in items)

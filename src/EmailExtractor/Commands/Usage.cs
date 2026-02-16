@@ -12,9 +12,10 @@ Commands:
   fetch-overview    Fetch financial overview for tickers (SEC EDGAR, optional StockAnalysis fallback)
   vic-collect-links Collect VIC /idea/... links from ideas pages into a deduped links file
   vic-crawl         Crawl VIC idea pages from links file; optional login; export JSONL + context docs
+  agent-loop        Run continuous agent: pipeline heartbeat + Telegram bot + OpenAI insights
 
 Notes:
-  - Configuration is via env vars.
+  - Configuration is via env vars and appsettings.json (agent non-secrets).
   - For SEC EDGAR calls, set SEC_USER_AGENT="AppName you@domain.com".
   - VIC crawling can require login and may still return teaser-only content.
 """;

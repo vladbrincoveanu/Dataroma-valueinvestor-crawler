@@ -5,6 +5,10 @@ namespace EmailExtractor.Commands;
 
 public static class VicCollectLinks
 {
+    private const string VicHost = "https://www.valueinvestorsclub.com";
+    private const string DefaultUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
     private static readonly Regex IdeaHrefRe = new(
         @"href\s*=\s*[""'](?<u>(?:https?://www\.valueinvestorsclub\.com)?/idea/[^""'#\s]+)[""']",
         RegexOptions.IgnoreCase | RegexOptions.Compiled
@@ -21,7 +25,7 @@ public static class VicCollectLinks
             "user-agent",
             Env.Get(
                 "USER_AGENT",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                DefaultUserAgent
             )
         );
 
@@ -82,7 +86,7 @@ public static class VicCollectLinks
             if (raw.Length == 0) continue;
             var abs = raw.StartsWith("http", StringComparison.OrdinalIgnoreCase)
                 ? raw
-                : "https://www.valueinvestorsclub.com" + raw;
+                : VicHost + raw;
             abs = abs.Split("/messages", 2, StringSplitOptions.None)[0];
             outLinks.Add(abs);
         }

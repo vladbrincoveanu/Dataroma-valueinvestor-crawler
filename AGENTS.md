@@ -55,6 +55,13 @@ PRs should include:
 - Linked issue/task (if applicable)
 - Notes on config/env vars and any migrations
 
+Required workflow for new tasks:
+
+- Start every new task in a new git worktree (branch from `main`).
+- Before each iteration, pull latest `main` and merge it into the local working branch.
+- Before marking work complete, rerun relevant checks (`make test`, `dotnet test`, lint/build as applicable).
+- When the task is fully complete and checks pass, open a PR targeting `main`.
+
 ## Security & Configuration Tips
 
 - Store secrets in `.env` (gitignored). Never commit API keys or email corpora with PII.

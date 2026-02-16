@@ -28,7 +28,7 @@ public static class VicCrawlIdeas
         RegexOptions.IgnoreCase | RegexOptions.Compiled
     );
     private static readonly Regex SectionRe = new(
-        @"<h4[^>]*>\s*(?<hdr>Description|Catalyst)\s*</h4>(?<body>[\s\S]*?)(?=<h4\b|</div>)",
+        @"<h4[^>]*>\s*(?<hdr>Description|Catalyst|Variant View|Comments?)\s*</h4>(?<body>[\s\S]*?)(?=<h4\b|</div>)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled
     );
     private static readonly Regex MetaDescRe = new(
@@ -253,12 +253,14 @@ public static class VicCrawlIdeas
 
         var description = "";
         var catalyst = "";
+        var comments = "";
         foreach (Match m in SectionRe.Matches(html ?? ""))
         {
             var h = (m.Groups["hdr"].Value ?? "").Trim().ToLowerInvariant();
             var body = CleanVicText(TextUtil.HtmlToText(m.Groups["body"].Value ?? ""));
             if (h == "description" && description.Length == 0) description = body;
             if (h == "catalyst" && catalyst.Length == 0) catalyst = body;
+            if ((h == "variant view" || h.StartsWith("comment", StringComparison.Ordinal)) && comments.Length == 0) comments = body;
         }
 
         if (description.Length == 0)
@@ -294,6 +296,7 @@ public static class VicCrawlIdeas
             isContestWinner,
             description,
             catalyst,
+            comments,
             gated,
             StableId(url, dateIso, ticker)
         );
@@ -363,6 +366,12 @@ public static class VicCrawlIdeas
             sb.AppendLine(x.Catalysts.Trim());
             sb.AppendLine();
         }
+        if (!string.IsNullOrWhiteSpace(x.Comments))
+        {
+            sb.AppendLine("Comments:");
+            sb.AppendLine(x.Comments.Trim());
+            sb.AppendLine();
+        }
         if (x.IsGated)
         {
             sb.AppendLine("Note:");
@@ -391,6 +400,7 @@ public static class VicCrawlIdeas
         bool IsContestWinner,
         string Description,
         string Catalysts,
+        string Comments,
         bool IsGated,
         string Id
     );

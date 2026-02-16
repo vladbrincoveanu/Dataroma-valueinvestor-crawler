@@ -5,7 +5,8 @@ This repository contains a .NET CLI solution for generating context docs, rankin
 ## Prereqs
 
 - .NET SDK 10+
-- `.env` (see `.env.example`)
+- `.env` (see `.env.example`) for secrets; auto-loaded at startup if present
+- `src/EmailExtractor/appsettings.json` for non-secret agent settings
 
 ## Build
 
@@ -42,3 +43,24 @@ dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- vic-collect-lin
 dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- vic-crawl --links-file idea_links_no_duplicates.txt --limit 50 --out out/vic_ideas.jsonl --out-ctx out/vic_context.txt
 VIC_ENABLE_LOGIN=1 VIC_USERNAME="your_user" VIC_PASSWORD="your_pass" dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- vic-crawl --limit 20
 ```
+
+## Agent Config
+
+Secrets stay in environment variables:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `OPENAI_API_KEY`
+
+Non-secret agent runtime settings are loaded from `src/EmailExtractor/appsettings.json`:
+
+- `Agent.OpenAiModel`
+- `Agent.OpenAiMaxTokens`
+- `Agent.OpenAiTemperature`
+- `Agent.HeartbeatMinutes`
+- `Agent.MaxContextChars`
+- `Agent.MaxConversationTurns`
+
+Optional override:
+
+- `APPSETTINGS_PATH` to point to a different JSON file.

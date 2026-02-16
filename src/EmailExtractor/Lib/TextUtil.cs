@@ -1,6 +1,6 @@
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Net;
+using System.Text;
 
 namespace EmailExtractor.Lib;
 
@@ -77,11 +77,27 @@ public static class TextUtil
 
     public static void WriteAtomic(string path, string content)
     {
-        var p = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(p)!);
-        var tmp = p + ".tmp";
-        File.WriteAllText(tmp, content, Encoding.UTF8);
-        if (File.Exists(p)) File.Delete(p);
-        File.Move(tmp, p);
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(dir))
+            Directory.CreateDirectory(dir);
+
+        var targetDir = string.IsNullOrWhiteSpace(dir) ? "." : dir;
+        var tempPath = Path.Combine(targetDir, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(tempPath, content ?? string.Empty, Encoding.UTF8);
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                return;
+            }
+            catch
+            {
+                // Fall back to move if replace is unsupported by the filesystem.
+            }
+        }
+
+        File.Move(tempPath, path, overwrite: true);
     }
 }

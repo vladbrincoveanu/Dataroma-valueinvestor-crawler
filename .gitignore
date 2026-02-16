@@ -1,0 +1,13 @@
+.env
+
+# Outputs
+out/
+.DS_Store
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.log

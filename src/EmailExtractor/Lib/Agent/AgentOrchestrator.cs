@@ -6,12 +6,21 @@ using EmailExtractor.Lib;
 
 namespace EmailExtractor.Lib.Agent;
 
+internal enum RoutedIntent
+{
+    Run,
+    Status,
+    Analyze,
+    Task,
+    Chat
+}
+
 public sealed class AgentOrchestrator
 {
     private readonly AgentConfig _config;
     private readonly ITelegramClient _telegram;
     private readonly IOpenAiClient _openAi;
-    private readonly Func<AgentConfig, CancellationToken, Task<PipelineResult>> _runPipeline;
+    private readonly JobManager _jobManager;
     private readonly ConcurrentDictionary<long, string> _activeTasks = new();
     private long _taskRunCounter;
 
@@ -19,12 +28,15 @@ public sealed class AgentOrchestrator
         AgentConfig config,
         ITelegramClient telegram,
         IOpenAiClient openAi,
-        Func<AgentConfig, CancellationToken, Task<PipelineResult>>? runPipeline = null)
+        JobManager? jobManager = null)
     {
         _config = config;
         _telegram = telegram;
         _openAi = openAi;
-        _runPipeline = runPipeline ?? PipelineRunner.RunFullPipelineAsync;
+        _jobManager = jobManager ?? new JobManager(
+            JobRegistry.All(),
+            JobRegistry.Pipelines(),
+            (text, ct) => TrySendAsync(_config.TelegramChatId, text, ct));
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -72,10 +84,42 @@ public sealed class AgentOrchestrator
         if (!text.StartsWith("/status", StringComparison.OrdinalIgnoreCase))
             await TrySendAsync(msg.ChatId, "Received. Processing...", ct);
 
-        if (text.StartsWith("/run", StringComparison.OrdinalIgnoreCase) ||
-            text.Contains("run pipeline", StringComparison.OrdinalIgnoreCase))
+        if (!text.StartsWith("/", StringComparison.Ordinal))
         {
-            await HandleRunAsync(msg.ChatId, state, ct);
+            var (intent, arg) = await RouteIntentAsync(text, ct);
+            switch (intent)
+            {
+                case RoutedIntent.Run:
+                    await HandleRunAsync(msg.ChatId, arg.Length == 0 ? "/run" : $"/run {arg}", ct);
+                    return;
+                case RoutedIntent.Status:
+                    await HandleStatusAsync(msg.ChatId, state, ct);
+                    return;
+                case RoutedIntent.Analyze:
+                    await HandleAnalyzeAsync(msg.ChatId, arg.Length == 0 ? "/analyze" : $"/analyze {arg}", state, ct);
+                    return;
+                case RoutedIntent.Task:
+                    await HandleTaskAsync(msg.ChatId, arg.Length == 0 ? "/task help" : $"/task {arg}", ct);
+                    return;
+                case RoutedIntent.Chat:
+                default:
+                    await HandleFreeFormAsync(msg.ChatId, text, state, ct);
+                    return;
+            }
+        }
+
+        if (text.StartsWith("/jobs", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleJobsAsync(msg.ChatId, ct);
+        }
+        else if (text.StartsWith("/run", StringComparison.OrdinalIgnoreCase) ||
+                 text.Contains("run pipeline", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleRunAsync(msg.ChatId, text, ct);
+        }
+        else if (text.StartsWith("/stop", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleStopAsync(msg.ChatId, text, ct);
         }
         else if (text.StartsWith("/status", StringComparison.OrdinalIgnoreCase))
         {
@@ -95,17 +139,188 @@ public sealed class AgentOrchestrator
         }
     }
 
-    private async Task HandleRunAsync(string chatId, AgentState state, CancellationToken ct)
+    private async Task<(RoutedIntent Intent, string Argument)> RouteIntentAsync(string text, CancellationToken ct)
+    {
+        var system = """
+You route Telegram user messages to one intent.
+Return exactly one line:
+INTENT=<run|status|analyze|task|chat>;ARG=<text>
+Rules:
+- status: asking status/health/what is running
+- run: asking to run/start pipeline/job
+- analyze: explicit ticker/company analysis request
+- task: asking to list/start background tasks/jobs/pipelines
+- chat: everything else
+For status/chat use empty ARG.
+For analyze ARG should be ticker if clear (e.g. AAPL), otherwise empty.
+For run/task keep ARG concise.
+""";
+        var user = $"Message: {text}";
+
+        try
+        {
+            var completion = await _openAi.ChatAsync(
+                [new ChatMessage("system", system), new ChatMessage("user", user)],
+                ct);
+
+            var raw = (completion.Content ?? "").Trim();
+            if (raw.Length == 0) return (RoutedIntent.Chat, "");
+
+            var intent = RoutedIntent.Chat;
+            var argument = "";
+            foreach (var part in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                var key = part[..eq].Trim().ToLowerInvariant();
+                var value = part[(eq + 1)..].Trim();
+                if (key == "intent")
+                    intent = value.ToLowerInvariant() switch
+                    {
+                        "run" => RoutedIntent.Run,
+                        "status" => RoutedIntent.Status,
+                        "analyze" => RoutedIntent.Analyze,
+                        "task" => RoutedIntent.Task,
+                        _ => RoutedIntent.Chat
+                    };
+                else if (key == "arg")
+                    argument = value;
+            }
+
+            return (intent, argument);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[agent] Intent routing fallback: {ex.Message}");
+            return (RoutedIntent.Chat, "");
+        }
+    }
+
+    private async Task HandleJobsAsync(string chatId, CancellationToken ct)
     {
         try
         {
-            await _telegram.SendMessageAsync(chatId, "Triggering pipeline cycle now...", ct);
-            await RunPipelineCycleAsync(state, ct);
+            var jobs = _jobManager.AvailableJobNames;
+            var pipelines = _jobManager.AvailablePipelineNames;
+            var running = _jobManager.GetRunningJobs();
+
+            var lines = new List<string>
+            {
+                "Jobs",
+                $"Available jobs ({jobs.Count}): {string.Join(", ", jobs)}",
+                $"Available pipelines ({pipelines.Count}): {string.Join(", ", pipelines)}"
+            };
+
+            if (running.Count == 0)
+            {
+                lines.Add("Running: none");
+            }
+            else
+            {
+                lines.Add("Running:");
+                lines.AddRange(running.Select(r => $"- {r.Name} ({r.Status})"));
+            }
+
+            await _telegram.SendMessageAsync(chatId, string.Join("\n", lines), ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[agent] /jobs error: {ex.Message}");
+            await TrySendAsync(chatId, $"Error: {ex.Message}", ct);
+        }
+    }
+
+    private async Task HandleRunAsync(string chatId, string text, CancellationToken ct)
+    {
+        try
+        {
+            var command = text.Trim();
+            if (!command.StartsWith("/run", StringComparison.OrdinalIgnoreCase))
+            {
+                var startedNatural = _jobManager.TryStartPipeline("default", ct);
+                await _telegram.SendMessageAsync(
+                    chatId,
+                    startedNatural ? "Started pipeline: default" : "Could not start pipeline: default (already running?)",
+                    ct);
+                return;
+            }
+            if (command.Equals("/run", StringComparison.OrdinalIgnoreCase) ||
+                command.Equals("run pipeline", StringComparison.OrdinalIgnoreCase))
+            {
+                var started = _jobManager.TryStartPipeline("default", ct);
+                await _telegram.SendMessageAsync(
+                    chatId,
+                    started ? "Started pipeline: default" : "Could not start pipeline: default (already running?)",
+                    ct);
+                return;
+            }
+
+            var remainder = command["/run".Length..].Trim();
+            if (remainder.StartsWith("pipeline", StringComparison.OrdinalIgnoreCase))
+            {
+                var pipelineName = remainder["pipeline".Length..].Trim();
+                if (pipelineName.Length == 0) pipelineName = "default";
+
+                var started = _jobManager.TryStartPipeline(pipelineName, ct);
+                await _telegram.SendMessageAsync(
+                    chatId,
+                    started
+                        ? $"Started pipeline: {pipelineName}"
+                        : $"Could not start pipeline: {pipelineName} (unknown or already running)",
+                    ct);
+                return;
+            }
+
+            if (remainder.Length == 0)
+            {
+                await _telegram.SendMessageAsync(
+                    chatId,
+                    "Usage: /run | /run <job-name> | /run pipeline [name]",
+                    ct);
+                return;
+            }
+
+            var startedJob = _jobManager.TryStartJob(remainder, ct);
+            await _telegram.SendMessageAsync(
+                chatId,
+                startedJob
+                    ? $"Started job: {remainder}"
+                    : $"Could not start job: {remainder} (unknown or already running)",
+                ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[agent] /run error: {ex.Message}");
+            await TrySendAsync(chatId, $"Error: {ex.Message}", ct);
+        }
+    }
+
+    private async Task HandleStopAsync(string chatId, string text, CancellationToken ct)
+    {
+        try
+        {
+            var target = text.Length > "/stop".Length
+                ? text["/stop".Length..].Trim()
+                : "";
+
+            if (target.Length == 0)
+            {
+                await _telegram.SendMessageAsync(chatId, "Usage: /stop <job-name|pipeline:name>", ct);
+                return;
+            }
+
+            var cancelled = _jobManager.TryCancel(target);
+            await _telegram.SendMessageAsync(
+                chatId,
+                cancelled ? $"Cancellation requested: {target}" : $"Not running: {target}",
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[agent] /stop error: {ex.Message}");
             await TrySendAsync(chatId, $"Error: {ex.Message}", ct);
         }
     }
@@ -129,7 +344,8 @@ public sealed class AgentOrchestrator
                 $"Cycle count: {state.CycleCount}",
                 $"Conversation turns: {state.ConversationHistory.Count}",
                 $"Top tickers: {topTickers}",
-                $"Last analysis: {lastAnalysisPreview}");
+                $"Last analysis: {lastAnalysisPreview}",
+                BuildRunningJobsSummary());
 
             await _telegram.SendMessageAsync(chatId, reply, ct);
         }
@@ -374,19 +590,8 @@ public sealed class AgentOrchestrator
         try { await _telegram.SendTypingAsync(_config.TelegramChatId, ct); }
         catch (Exception ex) { Console.Error.WriteLine($"[agent] Typing error (non-fatal): {ex.Message}"); }
 
-        await TrySendAsync(_config.TelegramChatId, "Running pipeline...", ct);
-
-        try
-        {
-            var result = await _runPipeline(_config, ct);
-            Console.Error.WriteLine($"[agent] Pipeline done. {result.Summary}");
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[agent] Pipeline error: {ex.Message}");
-            await TrySendAsync(_config.TelegramChatId, $"Pipeline error: {ex.Message}", ct);
-        }
+        var pipelineOk = await _jobManager.StartPipelineAndAwaitAsync("default", ct);
+        Console.Error.WriteLine($"[agent] Default pipeline finished. success={pipelineOk}");
 
         var systemPrompt = "You are a proactive investment research assistant.";
         try { systemPrompt = ContextBuilder.Build(_config); }
@@ -447,6 +652,15 @@ public sealed class AgentOrchestrator
         try { await _telegram.SendMessageAsync(chatId, text, ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex) { Console.Error.WriteLine($"[agent] TrySend error: {ex.Message}"); }
+    }
+
+    private string BuildRunningJobsSummary()
+    {
+        var running = _jobManager.GetRunningJobs();
+        if (running.Count == 0)
+            return "Running jobs: none";
+
+        return "Running jobs: " + string.Join(", ", running.Select(r => $"{r.Name} ({r.Status})"));
     }
 
     private static string BuildTopTickersSummary(string path, int top)

@@ -18,14 +18,22 @@ public sealed class AgentOrchestratorTests
                 [new TelegramMessage(1, "chat-1", "/task list", DateTime.UtcNow)],
                 []
             ],
-            onSecondPoll: () => cts.Cancel());
+            onPoll: p => { if (p == 2) cts.Cancel(); });
         var openAi = new FakeOpenAiClient(["cycle-analysis"]);
+        var jobManager = CreateJobManager(
+            telegram,
+            ("dataroma-rss", 0),
+            ("extract-tickers", 0),
+            ("fetch-overview", 0),
+            ("vic-crawl", 0),
+            ("vic-collect-links", 0),
+            ("foxland-format", 0));
 
         var sut = new AgentOrchestrator(
             config,
             telegram,
             openAi,
-            (_, _) => Task.FromResult(new PipelineResult(true, [], DateTime.UtcNow)));
+            jobManager);
 
         await sut.RunAsync(cts.Token);
 
@@ -47,14 +55,19 @@ public sealed class AgentOrchestratorTests
                 [new TelegramMessage(1, "chat-1", "/task not-a-real-job", DateTime.UtcNow)],
                 []
             ],
-            onSecondPoll: () => cts.Cancel());
+            onPoll: p => { if (p == 2) cts.Cancel(); });
         var openAi = new FakeOpenAiClient(["cycle-analysis"]);
+        var jobManager = CreateJobManager(
+            telegram,
+            ("dataroma-rss", 0),
+            ("extract-tickers", 0),
+            ("fetch-overview", 0));
 
         var sut = new AgentOrchestrator(
             config,
             telegram,
             openAi,
-            (_, _) => Task.FromResult(new PipelineResult(true, [], DateTime.UtcNow)));
+            jobManager);
 
         await sut.RunAsync(cts.Token);
 
@@ -75,26 +88,19 @@ public sealed class AgentOrchestratorTests
                 [new TelegramMessage(1, "chat-1", "hello", DateTime.UtcNow)],
                 []
             ],
-            onSecondPoll: () => cts.Cancel());
-        var openAi = new FakeOpenAiClient(["free-form-reply", "cycle-analysis"]);
+            onPoll: p => { if (p == 2) cts.Cancel(); });
+        var openAi = new FakeOpenAiClient(["INTENT=chat;ARG=", "free-form-reply", "cycle-analysis"]);
+        var jobManager = CreateJobManager(telegram, ("dataroma-rss", 0), ("extract-tickers", 0), ("fetch-overview", 0));
 
-        var pipelineCalls = 0;
-        Task<PipelineResult> RunPipeline(AgentConfig _, CancellationToken __)
-        {
-            pipelineCalls++;
-            return Task.FromResult(new PipelineResult(true, [], DateTime.UtcNow));
-        }
-
-        var sut = new AgentOrchestrator(config, telegram, openAi, RunPipeline);
+        var sut = new AgentOrchestrator(config, telegram, openAi, jobManager);
         await sut.RunAsync(cts.Token);
 
         var state = AgentState.Load(statePath);
-        Assert.Equal(1, pipelineCalls);
         Assert.Equal(1, state.CycleCount);
         Assert.Equal("cycle-analysis", state.LastAnalysis);
         Assert.Equal(2, state.ConversationHistory.Count);
         Assert.Contains(telegram.SentMessages, m => m.Text == "free-form-reply");
-        Assert.Contains(telegram.SentMessages, m => m.Text == "Running pipeline...");
+        Assert.Contains(telegram.SentMessages, m => m.Text == "Completed pipeline: default");
         Assert.Contains(telegram.SentMessages, m => m.Text == "cycle-analysis");
     }
 
@@ -117,14 +123,11 @@ public sealed class AgentOrchestratorTests
                 [],
                 []
             ],
-            onSecondPoll: () => cts.Cancel());
+            onPoll: p => { if (p == 2) cts.Cancel(); });
         var openAi = new FakeOpenAiClient(["restart-cycle-analysis"]);
+        var jobManager = CreateJobManager(telegram, ("dataroma-rss", 0), ("extract-tickers", 0), ("fetch-overview", 0));
 
-        var sut = new AgentOrchestrator(
-            config,
-            telegram,
-            openAi,
-            (_, _) => Task.FromResult(new PipelineResult(true, [], DateTime.UtcNow)));
+        var sut = new AgentOrchestrator(config, telegram, openAi, jobManager);
 
         await sut.RunAsync(cts.Token);
 
@@ -132,6 +135,70 @@ public sealed class AgentOrchestratorTests
         Assert.Equal(2, state.CycleCount);
         Assert.Equal("restart-cycle-analysis", state.LastAnalysis);
         Assert.Contains("seed-doc", state.SeenDataromaIds);
+    }
+
+    [Fact]
+    public async Task RunAsync_JobsCommand_ListsAvailableJobsAndPipelines()
+    {
+        using var temp = new TempDir();
+        var statePath = Path.Combine(temp.Path, "agent_state.json");
+        var config = CreateConfig(temp.Path, statePath);
+
+        var cts = new CancellationTokenSource();
+        var telegram = new FakeTelegramClient(
+            polls:
+            [
+                [new TelegramMessage(1, "chat-1", "/jobs", DateTime.UtcNow)],
+                []
+            ],
+            onPoll: p => { if (p == 2) cts.Cancel(); });
+        var openAi = new FakeOpenAiClient(["cycle-analysis"]);
+        var jobManager = CreateJobManager(
+            telegram,
+            ("dataroma-rss", 0),
+            ("extract-tickers", 0),
+            ("fetch-overview", 0),
+            ("vic-crawl", 0),
+            ("vic-collect-links", 0),
+            ("foxland-format", 0));
+
+        var sut = new AgentOrchestrator(config, telegram, openAi, jobManager);
+        await sut.RunAsync(cts.Token);
+
+        var jobsReply = telegram.SentMessages.FirstOrDefault(m => m.Text.StartsWith("Jobs", StringComparison.Ordinal));
+        Assert.NotEqual(default, jobsReply);
+        Assert.Contains("Available jobs (6)", jobsReply.Text);
+        Assert.Contains("Available pipelines (2)", jobsReply.Text);
+    }
+
+    [Fact]
+    public async Task RunAsync_RunCommand_StartsBackgroundJobAndReportsCompletion()
+    {
+        using var temp = new TempDir();
+        var statePath = Path.Combine(temp.Path, "agent_state.json");
+        var config = CreateConfig(temp.Path, statePath);
+
+        var cts = new CancellationTokenSource();
+        var telegram = new FakeTelegramClient(
+            polls:
+            [
+                [new TelegramMessage(1, "chat-1", "/run dataroma-rss", DateTime.UtcNow)],
+                [],
+                []
+            ],
+            onPoll: p => { if (p == 3) cts.Cancel(); });
+        var openAi = new FakeOpenAiClient(["cycle-analysis"]);
+        var jobManager = CreateJobManager(
+            telegram,
+            ("dataroma-rss", 20),
+            ("extract-tickers", 0),
+            ("fetch-overview", 0));
+
+        var sut = new AgentOrchestrator(config, telegram, openAi, jobManager);
+        await sut.RunAsync(cts.Token);
+
+        Assert.Contains(telegram.SentMessages, m => m.Text == "Started job: dataroma-rss");
+        Assert.Contains(telegram.SentMessages, m => m.Text == "Completed job: dataroma-rss");
     }
 
     private static AgentConfig CreateConfig(string outDir, string statePath)
@@ -157,18 +224,46 @@ public sealed class AgentOrchestratorTests
             AgentStatePath: statePath);
     }
 
+    private static JobManager CreateJobManager(FakeTelegramClient telegram, params (string Name, int DelayMs)[] jobs)
+    {
+        var registry = new Dictionary<string, JobDefinition>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, delayMs) in jobs)
+        {
+            registry[name] = new JobDefinition(
+                name,
+                $"Test job {name}",
+                async ct =>
+                {
+                    if (delayMs > 0)
+                        await Task.Delay(delayMs, ct);
+                    return 0;
+                });
+        }
+
+        var pipelines = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["default"] = ["dataroma-rss", "extract-tickers", "fetch-overview"],
+            ["full"] = ["foxland-format", "dataroma-rss", "vic-collect-links", "vic-crawl", "extract-tickers", "fetch-overview"]
+        };
+
+        return new JobManager(
+            registry,
+            pipelines,
+            (text, ct) => telegram.SendMessageAsync("chat-1", text, ct));
+    }
+
     private sealed class FakeTelegramClient : ITelegramClient
     {
         private readonly List<List<TelegramMessage>> _polls;
-        private readonly Action? _onSecondPoll;
+        private readonly Action<int>? _onPoll;
         private int _pollCount;
 
         public List<(string ChatId, string Text)> SentMessages { get; } = [];
 
-        public FakeTelegramClient(List<TelegramMessage>[] polls, Action? onSecondPoll = null)
+        public FakeTelegramClient(List<TelegramMessage>[] polls, Action<int>? onPoll = null)
         {
             _polls = polls.ToList();
-            _onSecondPoll = onSecondPoll;
+            _onPoll = onPoll;
         }
 
         public Task<List<TelegramMessage>> PollUpdatesAsync(int timeoutSec, CancellationToken ct)
@@ -176,8 +271,7 @@ public sealed class AgentOrchestratorTests
             _ = timeoutSec;
             _pollCount++;
 
-            if (_pollCount == 2)
-                _onSecondPoll?.Invoke();
+            _onPoll?.Invoke(_pollCount);
 
             if (ct.IsCancellationRequested)
                 throw new OperationCanceledException(ct);

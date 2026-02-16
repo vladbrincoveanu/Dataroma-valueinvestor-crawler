@@ -13,7 +13,8 @@ This repository contains a .NET CLI solution for generating context docs, rankin
 ## Prereqs
 
 - .NET SDK 10+
-- `.env` (see `.env.example`)
+- `src/EmailExtractor/appsettings.json` for non-secret agent settings
+- .NET user-secrets for agent secrets (or environment variables as fallback)
 
 ## Build
 
@@ -56,3 +57,26 @@ dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- vic-collect-lin
 dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- vic-crawl --links-file idea_links_no_duplicates.txt --limit 50 --out out/vic_ideas.jsonl --out-ctx out/vic_context.txt
 VIC_ENABLE_LOGIN=1 VIC_USERNAME="your_user" VIC_PASSWORD="your_pass" dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- vic-crawl --limit 20
 ```
+
+## Agent Config
+
+Non-secrets are read from `src/EmailExtractor/appsettings.json` (`Agent` section), for example:
+
+- `Agent.OpenAiBaseUrl`
+- `Agent.OpenAiModel`
+- `Agent.OpenAiMaxTokens`
+- `Agent.OpenAiTemperature`
+- `Agent.HeartbeatMinutes`
+- `Agent.MinMinutesBetweenCycleAnalysis`
+- `Agent.MaxContextChars`
+- `Agent.MaxConversationTurns`
+
+Secrets should be stored in user-secrets:
+
+```bash
+dotnet user-secrets --project src/EmailExtractor/EmailExtractor.csproj set "Agent:TelegramBotToken" "<token>"
+dotnet user-secrets --project src/EmailExtractor/EmailExtractor.csproj set "Agent:TelegramChatId" "<chat-id>"
+dotnet user-secrets --project src/EmailExtractor/EmailExtractor.csproj set "Agent:OpenAiApiKey" "<api-key>"
+```
+
+Environment variables remain supported as fallback for compatibility.

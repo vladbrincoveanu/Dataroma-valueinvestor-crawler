@@ -25,6 +25,7 @@ public static class Program
                 "fetch-overview" => await FetchFinancialOverview.Run(rest),
                 "vic-collect-links" => await VicCollectLinks.Run(rest),
                 "vic-crawl" => await VicCrawlIdeas.Run(rest),
+                "agent-loop" => await AgentLoop.Run(rest),
                 _ => Unknown(cmd)
             };
         }

@@ -66,6 +66,53 @@ public sealed class TelegramBotClientTests
         Assert.Equal(payload, string.Concat(sentTexts));
     }
 
+    [Fact]
+    public async Task PollUpdatesAsync_AcceptsNormalizedSupergroupChatId()
+    {
+        using var http = new HttpClient(new StubHttpHandler(_ =>
+        {
+            var body = """
+            {"ok":true,"result":[
+              {"update_id":200,"message":{"chat":{"id":"-1003639865591"},"text":"ping","date":1700000002}}
+            ]}
+            """;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+        }));
+
+        var sut = new TelegramBotClient("token", "-3639865591", http);
+        var poll = await sut.PollUpdatesAsync(1, CancellationToken.None);
+
+        Assert.Single(poll);
+        Assert.Equal("ping", poll[0].Text);
+        Assert.Equal("-1003639865591", poll[0].ChatId);
+    }
+
+    [Fact]
+    public async Task PollUpdatesAsync_AcceptsAnyConfiguredChatIdFromList()
+    {
+        using var http = new HttpClient(new StubHttpHandler(_ =>
+        {
+            var body = """
+            {"ok":true,"result":[
+              {"update_id":300,"message":{"chat":{"id":"chat-b"},"text":"hi-b","date":1700000003}}
+            ]}
+            """;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+        }));
+
+        var sut = new TelegramBotClient("token", "chat-a, chat-b", http);
+        var poll = await sut.PollUpdatesAsync(1, CancellationToken.None);
+
+        Assert.Single(poll);
+        Assert.Equal("hi-b", poll[0].Text);
+    }
+
     private sealed class StubHttpHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>> _handler;

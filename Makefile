@@ -1,13 +1,13 @@
 .PHONY: build test run clean
 
 build:
-	dotnet build EmailExtractor.sln
+	dotnet build ValueInvestorCrawler.sln
 
 test:
-	dotnet test EmailExtractor.sln
+	dotnet test ValueInvestorCrawler.sln
 
 run:
-	dotnet run --project src/EmailExtractor/EmailExtractor.csproj -- $(CMD)
+	dotnet run --project src/ValueInvestorCrawler.csproj -- $(CMD)
 
 clean:
-	dotnet clean EmailExtractor.sln
+	dotnet clean ValueInvestorCrawler.sln

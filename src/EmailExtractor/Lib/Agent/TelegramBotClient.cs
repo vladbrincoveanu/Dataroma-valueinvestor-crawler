@@ -9,7 +9,7 @@ public sealed record TelegramMessage(long UpdateId, string ChatId, string Text, 
 public sealed class TelegramBotClient : ITelegramClient
 {
     private readonly string _baseUrl;
-    private readonly string _allowedChatId;
+    private readonly HashSet<string> _allowedChatIds;
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private long _offset;
@@ -17,7 +17,7 @@ public sealed class TelegramBotClient : ITelegramClient
     public TelegramBotClient(string botToken, string allowedChatId, HttpClient? http = null)
     {
         _baseUrl = $"https://api.telegram.org/bot{botToken}/";
-        _allowedChatId = allowedChatId;
+        _allowedChatIds = ParseAllowedChatIds(allowedChatId);
         _ownsHttp = http is null;
         _http = http ?? new HttpClient();
     }
@@ -52,20 +52,25 @@ public sealed class TelegramBotClient : ITelegramClient
             var updateId = update.TryGetProperty("update_id", out var uid) ? uid.GetInt64() : 0;
             _offset = Math.Max(_offset, updateId + 1);
 
-            if (!update.TryGetProperty("message", out var msg))
+            if (!TryGetMessagePayload(update, out var msg))
                 continue;
 
             var chatId = "";
             if (msg.TryGetProperty("chat", out var chat) && chat.TryGetProperty("id", out var cid))
                 chatId = cid.ToString();
 
-            // Security: ignore messages from other chats
-            if (chatId != _allowedChatId)
+            // Security: ignore messages from chats not explicitly allowed.
+            if (!IsAllowedChat(chatId))
                 continue;
 
             var text = msg.TryGetProperty("text", out var textEl) ? textEl.GetString() ?? "" : "";
+            if (text.Length == 0 && msg.TryGetProperty("caption", out var captionEl))
+                text = captionEl.GetString() ?? "";
             var unixDate = msg.TryGetProperty("date", out var dateEl) ? dateEl.GetInt64() : 0;
             var sentAt = DateTimeOffset.FromUnixTimeSeconds(unixDate).UtcDateTime;
+
+            if (text.Length == 0)
+                continue;
 
             messages.Add(new TelegramMessage(updateId, chatId, text, sentAt));
         }
@@ -107,5 +112,41 @@ public sealed class TelegramBotClient : ITelegramClient
         var payload = JsonSerializer.Serialize(new { chat_id = chatId, text });
         using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         await _http.PostAsync(url, content, ct);
+    }
+
+    private bool IsAllowedChat(string chatId)
+    {
+        if (chatId.Length == 0 || _allowedChatIds.Count == 0) return false;
+        return _allowedChatIds.Contains(chatId) || _allowedChatIds.Contains(NormalizeChatId(chatId));
+    }
+
+    private static HashSet<string> ParseAllowedChatIds(string value)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        var parts = value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            result.Add(part);
+            result.Add(NormalizeChatId(part));
+        }
+
+        return result;
+    }
+
+    private static string NormalizeChatId(string chatId)
+    {
+        if (chatId.StartsWith("-100", StringComparison.Ordinal) && chatId.Length > 4)
+            return "-" + chatId[4..];
+        return chatId;
+    }
+
+    private static bool TryGetMessagePayload(JsonElement update, out JsonElement payload)
+    {
+        if (update.TryGetProperty("message", out payload)) return true;
+        if (update.TryGetProperty("channel_post", out payload)) return true;
+        if (update.TryGetProperty("edited_message", out payload)) return true;
+        if (update.TryGetProperty("edited_channel_post", out payload)) return true;
+        payload = default;
+        return false;
     }
 }

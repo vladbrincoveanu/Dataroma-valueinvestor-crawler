@@ -52,7 +52,7 @@ public sealed class TelegramBotClient : ITelegramClient
             var updateId = update.TryGetProperty("update_id", out var uid) ? uid.GetInt64() : 0;
             _offset = Math.Max(_offset, updateId + 1);
 
-            if (!update.TryGetProperty("message", out var msg))
+            if (!TryGetMessagePayload(update, out var msg))
                 continue;
 
             var chatId = "";
@@ -64,8 +64,13 @@ public sealed class TelegramBotClient : ITelegramClient
                 continue;
 
             var text = msg.TryGetProperty("text", out var textEl) ? textEl.GetString() ?? "" : "";
+            if (text.Length == 0 && msg.TryGetProperty("caption", out var captionEl))
+                text = captionEl.GetString() ?? "";
             var unixDate = msg.TryGetProperty("date", out var dateEl) ? dateEl.GetInt64() : 0;
             var sentAt = DateTimeOffset.FromUnixTimeSeconds(unixDate).UtcDateTime;
+
+            if (text.Length == 0)
+                continue;
 
             messages.Add(new TelegramMessage(updateId, chatId, text, sentAt));
         }
@@ -133,5 +138,15 @@ public sealed class TelegramBotClient : ITelegramClient
         if (chatId.StartsWith("-100", StringComparison.Ordinal) && chatId.Length > 4)
             return "-" + chatId[4..];
         return chatId;
+    }
+
+    private static bool TryGetMessagePayload(JsonElement update, out JsonElement payload)
+    {
+        if (update.TryGetProperty("message", out payload)) return true;
+        if (update.TryGetProperty("channel_post", out payload)) return true;
+        if (update.TryGetProperty("edited_message", out payload)) return true;
+        if (update.TryGetProperty("edited_channel_post", out payload)) return true;
+        payload = default;
+        return false;
     }
 }
